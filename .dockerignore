@@ -1,0 +1,34 @@
+.git
+.github
+.agents
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Secrets — must never reach an image layer.
+.env
+.env.*
+!.env.example
+*.pem
+*service-account*.json
+
+# Patient data — must never reach an image layer.
+recordings/
+transcripts/
+*.wav
+*.mp3
+*.opus
+
+# Not needed at runtime.
+docs/
+evals/runs/
+tests/
+node_modules/
+*.md
+!README.md

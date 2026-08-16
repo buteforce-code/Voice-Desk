@@ -1,0 +1,31 @@
+# Railway config-as-code. Railway builds with the Dockerfile whenever it finds
+# one, so builder is pinned explicitly rather than left to detection.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+
+# Restart on crash, but bounded — a crashloop must surface as an alert, not
+# absorb itself silently. Pairs with the dead-letter queue at G7.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# ---------------------------------------------------------------------------
+# Two settings that are deliberately NOT here, and must be set in the Railway
+# dashboard for the voice service:
+#
+#   1. Region: Asia Southeast (Singapore). Railway has no India region.
+#      Compute may sit outside India; DATA AT REST MAY NOT. Supabase stays on
+#      ap-south-1 (Mumbai). See PROJECT.md 2.4.
+#
+#   2. Do NOT enable scale-to-zero on the voice service. A cold start is a
+#      dead call — the caller hangs up long before the agent speaks. This is
+#      the specific failure that ruled Render's free tier out.
+#
+# The dashboard is the authority for both; this comment exists so the next
+# person does not have to rediscover them.
+# ---------------------------------------------------------------------------
