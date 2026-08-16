@@ -4,8 +4,9 @@
 > **Current gate: G3 passed. G4 next.**
 > **Rollout stage: pre-offline-eval.** Nothing is deployed. Nothing may call a real patient.
 
-Design partner: **Sitapati Clinic and Hospital**, Royapettah, Chennai.
-Product shape: single-tenant-shaped, multi-tenant-ready. The clinic is a design partner, not the product.
+**No clinic is engaged.** This is a portfolio build. Sitapati Clinic and Hospital (Royapettah, Chennai) is a *target prospect profile* used to keep requirements honest — no contact has been made and no relationship exists. See D5.
+
+Demo tenant is **fictional** (`Meridian Speciality Clinic`). Product shape: single-tenant-shaped, multi-tenant-ready.
 
 ---
 
@@ -120,6 +121,9 @@ The undo window on C6/C7/C8 is **autonomy with a grace period, not approval.** R
 | 8kHz telephony + code-switch degrades ASR | Wrong bookings | Sarvam Saaras (trained on Indian telephony); dedicated G5 code-switch eval slice |
 | Latency creep from RAG lookup | Caller hangs up | Tenant config preloaded in memory; no network RAG on the hot path |
 | Clinic has no scheduling API | No write-back | Flat-file + human-confirm fallback mode; designated-SoT table with daily reconciliation |
+| **Railway has no India region** (US West/East, EU West, Asia Southeast only) | Compute sits in Singapore, not India | Acceptable: DPDP §16 permits processing outside India absent a blacklist, and TRAI residency binds *recordings at rest*, not compute. **All data at rest stays in Supabase Mumbai (`ap-south-1`), non-negotiable.** Chennai→Singapore RTT ≈30–50ms, no material latency cost. Revisit if an India region ships |
+| Railway enforces a **15-minute connection limit** | Long calls drop mid-stream | `MAX_CALL_DURATION_SEC=420` (7 min) sits well inside it. Becomes a real constraint only if hold-music or long-queue features are ever added |
+| Render free tier cold-starts at 50s+ (documented in vault `tech_stack.md`) | **A cold start is a dead call** — the caller hangs up long before the agent answers | Primary reason Railway is preferred over Render here. Whichever host, the voice service must never scale to zero once a DID is live |
 
 ### 2.5 Named owners
 
@@ -130,7 +134,9 @@ The undo window on C6/C7/C8 is **autonomy with a grace period, not approval.** R
 | Data / privacy (DPDP) | Dhyaneshwaran |
 | Business outcome | Dhyaneshwaran |
 
-One person holds all four today. Written down anyway, per G2. Clinical sign-off on C13/C14 boundaries must be countersigned by the design-partner clinic before any live call.
+One person holds all four today. Written down anyway, per G2.
+
+**Clinical sign-off on the C13/C14 boundaries is unsigned and cannot be signed by Buteforce.** No clinician has reviewed them. This is an open governance gap, not a completed item: it blocks any live call with a real patient, and must be countersigned by the first real clinic before rollout stage `shadow mode`.
 
 ---
 
@@ -173,7 +179,32 @@ Chosen over Vapi/Retell.
 - Above 10K min/month the framework path undercuts managed by 60–80%.
 - `services_overview.md` states Buteforce does not ship "generic chatbots you can buy off Voiceflow." A managed wrapper would contradict the positioning this project exists to prove.
 
-Deploy target is Render or GCP — both already in use in this org. The dev laptop is not the deploy target and was never the constraint.
+The dev laptop is not the deploy target and was never the constraint.
+
+### D1a — Host: Railway (2026-08-16)
+
+Chosen over Render and GCP. No GCP credit available. Railway's usage-based pricing suits a project that is idle most of its life, and Render's free-tier 50s cold start is fatal for voice — a caller hangs up long before the agent speaks.
+
+Accepted with two caveats, both recorded in §2.4: no India region (Singapore is nearest; **data at rest stays in Supabase Mumbai regardless**), and a 15-minute connection cap (7-minute call ceiling sits inside it).
+
+### D5 — No clinic is engaged. The demo tenant is fictional (2026-08-16)
+
+Sitapati Clinic and Hospital is a **real organisation that has not been contacted.** It is used only as a private target-prospect profile to keep requirements grounded.
+
+Every public artifact — demo, replay page, screenshots, case study — uses a **fictional clinic** (`Meridian Speciality Clinic`) with fictional doctors and fictional slots. No real hospital's name, branding, phone number or doctor roster appears in anything shippable.
+
+Two reasons, and the first is sufficient on its own:
+
+1. A public demo branded as a real named hospital's booking line implies a working relationship and an endorsement that do not exist, and would put a real clinic's name on an unreviewed clinical-boundary system. Not shippable at any quality bar.
+2. It is what the project was asked for anyway: a **white-label blueprint** that copies to any clinic in any market. Hard-binding the demo to one hospital is the thing that would stop it being reusable.
+
+Sitapati stays in the private vault note as a prospect. If they later become a real design partner, that is a config file and a signed clinical review, not a rebuild.
+
+### D6 — Telephony: Plivo (2026-08-16)
+
+API-first, publishes a Plivo→Pipecat→Sarvam integration guide, inbound DID ₹0.40–0.90/min. Exotel is the stronger enterprise incumbent and remains the swap target if an enterprise clinic later demands it — which is why telephony sits behind the same provider abstraction as STT/TTS.
+
+**No DID is purchased yet.** With no clinic and no eval baseline, there is nothing to call. The spend happens at rollout stage `internal sandbox`, not before.
 
 ### D2 — Cascaded pipeline, not speech-to-speech (2026-08-16)
 

@@ -66,7 +66,7 @@ uv sync                   # installs pipecat + sarvam override
 python -m voicedesk.dev   # local dev with a tunnelled DID
 ```
 
-Deploy target is Render or GCP, India region. **Never the dev laptop.**
+Deploy target is Railway (Asia Southeast). **Never the dev laptop.** All data at rest stays in Supabase Mumbai — see `PROJECT.md` §2.4.
 
 ## Documentation
 

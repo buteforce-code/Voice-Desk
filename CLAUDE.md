@@ -42,7 +42,8 @@ business need → risk boundary → workflow + UX → tools/data
 | Telephony | Plivo or Exotel (inbound DID) |
 | Data | Supabase (Postgres), India region |
 | Dashboard | Next.js 16 · React 19 · Tailwind v4 · Framer Motion |
-| Deploy | Render or GCP — **never the dev laptop** |
+| Deploy | Railway (Asia Southeast) — **never the dev laptop** |
+| Data at rest | Supabase Mumbai `ap-south-1` — **non-negotiable, do not move** |
 
 **Do not use Vertex AI** for Gemini. Google AI Studio only, `GOOGLE_GENAI_USE_VERTEXAI=false`. This is a standing org-wide issue — see vault `tech_stack.md`.
 
