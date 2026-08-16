@@ -1,7 +1,7 @@
 # Voice Desk — Project Definition
 
 > Built and judged against `.agents/rules/agent_build_standard.md`, gated by `.agents/workflows/new_project_lifecycle.md`.
-> **Current gate: G3 passed. G4 next.**
+> **Current gate: G4 passed. G5 next — the gate that decides whether the rest was real.**
 > **Rollout stage: pre-offline-eval.** Nothing is deployed. Nothing may call a real patient.
 
 **No clinic is engaged.** This is a portfolio build. Sitapati Clinic and Hospital (Royapettah, Chennai) is a *target prospect profile* used to keep requirements honest — no contact has been made and no relationship exists. See D5.
@@ -152,7 +152,35 @@ Key invariant: **`execute` is reachable only from `approval`.** No other edge ex
 
 Prompts may now be written. Not before.
 
-## 4. Tools (G4) — not started
+## 4. Tools as narrow APIs (G4) — passed
+
+| Requirement | Artifact |
+|---|---|
+| One function per action, strict schema in and out | `tools/schemas.py` — Pydantic `extra="forbid"`, `frozen=True`. Six tools, no `run_query`/`execute` escape hatch |
+| Server-side authorization on every tool | `tools/registry.py::_authorize` — `ToolContext` is built by the session; the model cannot assert its own `clinic_id`, `state` or `approval_token` |
+| Least privilege credentials | `voicedesk_agent` role, `db/migrations/0001_init.sql` |
+| Rate limits | 25 tool calls per call, 8 per tool per call |
+| Idempotency | Required on every mutating tool; replay returns cached result |
+| Audit log | One `agent_actions` row per **attempt**, rejections included |
+| Sandbox / dry-run | `ToolContext.dry_run`, default `true` |
+| Untrusted content bounded, stripped, fenced as data | `security/fencing.py` — containment not detection, per-call nonce envelope |
+
+Adapter seam: `adapters/base.SchedulingAdapter` Protocol. `HmisAdapter` is **deliberately unimplemented** — no clinic is engaged, so an adapter written against a guessed API shape would be fiction.
+
+### D7 — Speculative execution is tiered (2026-08-16)
+
+Prefetching reads on high-confidence intent saves 200–400ms. Prefetching a write means acting on a half-heard sentence before the caller finished — textbook excessive agency.
+
+Rule: **speculation requires `AUTONOMOUS` tier AND `side_effect_free`.** `hold_slot` is autonomous but mutating, so it is excluded. Enforced by `ToolSpec.speculatable` / `SpeculationNotPermitted`, not by convention.
+
+### D8 — Smart Turn v3 for end-of-turn detection (2026-08-16)
+
+Pipecat's open-source semantic turn model — reads the raw waveform rather than the transcript, 12ms int8 CPU inference, BSD-2, already the Pipecat default.
+
+A VAD-only agent interrupts anyone who pauses mid-sentence. Elderly callers pause; code-switchers pause at the switch; people reading a number off a card pause. Each interruption is a hang-up, and hang-ups are the metric this product exists to move.
+
+Its published language coverage does not confirm Tamil or Hindi. **Fine-tuning it on Tamil/Hindi telephony-band audio is the most defensible technical edge available here** — no competitor on a managed platform can tune it. Sequenced as a **G5 follow-on**: measure baseline turn accuracy on the code-switch slice first, fine-tune only if the number justifies it. See `docs/LATENCY.md`.
+
 ## 5. Evaluation (G5) — not started
 ## 6. Validators (G6) — not started
 ## 7. Operations (G7) — not started
