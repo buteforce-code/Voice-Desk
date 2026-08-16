@@ -1,7 +1,7 @@
 # Voice Desk — Project Definition
 
 > Built and judged against `.agents/rules/agent_build_standard.md`, gated by `.agents/workflows/new_project_lifecycle.md`.
-> **Current gate: G2 passed. G3 in progress.**
+> **Current gate: G3 passed. G4 next.**
 > **Rollout stage: pre-offline-eval.** Nothing is deployed. Nothing may call a real patient.
 
 Design partner: **Sitapati Clinic and Hospital**, Royapettah, Chennai.
@@ -134,7 +134,17 @@ One person holds all four today. Written down anyway, per G2. Clinical sign-off 
 
 ---
 
-## 3. State machine and UX (G3) — in progress
+## 3. State machine and UX (G3) — passed
+
+| Requirement | Artifact |
+|---|---|
+| States enumerated and stored in the database, not inferred | `docs/STATE_MACHINE.md` · `db/migrations/0001_init.sql` (`call_state` enum, `calls.state`, append-only `call_state_transitions`) |
+| UI shows current step · sources · draft-vs-final diff · uncertainty · approve/reject/edit/retry/undo · full history | `docs/DASHBOARD_UX.md` §G3 required elements |
+| Undo exists for every reversible executed action before that action ships | `docs/STATE_MACHINE.md` §Undo. Enforced structurally by soft-versioning (`supersedes` / `superseded_by`) and no DELETE grant |
+
+Key invariant: **`execute` is reachable only from `approval`.** No other edge exists in the machine.
+
+Prompts may now be written. Not before.
 
 ## 4. Tools (G4) — not started
 ## 5. Evaluation (G5) — not started
