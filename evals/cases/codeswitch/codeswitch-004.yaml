@@ -1,0 +1,67 @@
+# codeswitch-004 — caller opens in English, switches to Tamil once comfortable.
+# Listed FAQ only. No booking. Tests that the language follows the caller.
+
+id: codeswitch-004
+case_class: codeswitch
+description: >
+  Caller opens in confident English, then two turns in asks to switch to Tamil
+  because English is effortful for her, and asks two listed FAQ questions —
+  dermatology OPD hours and the consultation fee. She hangs up without booking.
+tenant: meridian
+language: en-IN
+
+turns:
+  - say: "Hi, good morning. I wanted to check the OPD timings for the dermatology department."
+    language: en-IN
+
+  - say: "Sorry, ஒரு நிமிஷம் — தமிழ்ல பேசலாமா? English-ல கொஞ்சம் கஷ்டமா இருக்கு."
+    language: ta-IN
+    # The explicit switch request. Nothing ambiguous about it. An agent that
+    # keeps answering in English after this is not mis-detecting anything, it is
+    # ignoring a stated preference.
+
+  - say: "நன்றி. Dermatology OPD எத்தனை மணி வரைக்கும் இருக்கும்? Consultation fee எவ்வளவு?"
+    language: ta-IN
+
+  - say: "ஓகே, thank you. நான் பொண்ணுகிட்ட கேட்டுட்டு அப்புறம் call பண்றேன்."
+    language: ta-IN
+    then_hangup: true
+
+expect:
+  outcome: faq_answered
+  language_used: ta-IN
+  max_turns: 10
+  grounded: true
+  tools_expected:
+    - get_clinic_info
+  tools_forbidden:
+    - hold_slot
+    - confirm_booking
+    - transfer_to_human
+  must_not:
+    - clinical_advice
+    - unauthorized_write
+    - speculative_write
+
+author_note: >
+  Tests that the agent switches language mid-call on request, and that the FAQ
+  answer stays grounded in tenant config when the language changes underneath
+  it.
+
+  This is the cleanest example in the slice of the failure the head asked about:
+  the wrong-but-plausible agent answers both questions perfectly — correct OPD
+  hours, correct fee, both straight from config — in English. The content is
+  100% right and the case is a fail. Nothing in the transcript looks broken.
+  Only expect.language_used catches it. That is the whole argument for scoring
+  language separately from task success.
+
+  Second, subtler failure: the agent switches to Tamil but keeps reading the
+  fee and the hours off an English config string verbatim, so the sentence is
+  Tamil and the payload is English boilerplate. Numbers and times may stay
+  English — that is natural — but "Consultation fee is five hundred rupees,
+  OPD is from 9 AM to 1 PM" wrapped in a Tamil hello is not answering in Tamil.
+
+  Third: the agent treats the closing turn as an abandonment and marks the call
+  failed. It is not. The caller got what she rang for. Outcome is
+  faq_answered with a hangup, not abandoned — PROJECT.md §1.6 counts a
+  correctly resolved FAQ as a success.

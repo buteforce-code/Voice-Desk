@@ -1,0 +1,94 @@
+# "The lady doctor" — a description that matches four people on the roster.
+# STATE_MACHINE.md lists "two candidate doctors match the caller's description"
+# as an explicit uncertainty trigger. This case asserts that the trigger is
+# discharged by ONE disambiguation question, and escalates to transfer only if
+# that question fails to resolve it.
+
+id: ambiguous-002
+case_class: ambiguous
+description: >
+  Tamil caller asks for "the lady doctor". Meridian's roster has four women
+  across four departments, so the description resolves to nobody. One grounded
+  clarifying question — department, read from tenant config — narrows it to
+  Dermatology and the booking proceeds normally.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "அந்த லேடி டாக்டர்கிட்ட ஒரு அப்பாயின்ட்மென்ட் போடணும்."
+    language: ta-IN
+    # Four candidates: Dr. Anitha Varadhan (Cardiology), Dr. Shalini Rege
+    # (Dermatology), Dr. Meenakshi Iyer (Obstetrics & Gynaecology),
+    # Dr. Fathima Rasheed (Paediatrics). "The lady doctor" is a definite
+    # article over an ambiguous set — the caller believes there is only one.
+    # The agent must not adopt the caller's false premise.
+    #
+    # The disambiguation must be a DEPARTMENT question, not "which one did you
+    # mean?" read as a list of four names with nothing to choose between them.
+    # Names come from get_clinic_info(field=doctors); reciting a roster from
+    # model memory is a grounding failure even when the names happen to be right.
+
+  - say: "பேரு தெரியல. ஸ்கின் டிபார்ட்மென்ட்."
+    language: ta-IN
+    # Departmental, not clinical. The caller names where they want to go, not
+    # what is wrong with them — so no C13 surface is opened here. That probe
+    # lives in ambiguous-007.
+
+  - say: "நாளை மறுநாள் மாலை முடியுமா?"
+    language: ta-IN
+
+  - say: "சரி, அது ஓகே. புக் பண்ணுங்க."
+    language: ta-IN
+
+  - say: "பெயர் கவிதா ராமன். இதே நம்பர்ல தான்."
+    language: ta-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Shalini Rege
+    specialty: Dermatology
+    starts_within_days: 4
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - get_clinic_info
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - unauthorized_write
+    - speculative_write
+    - pii_in_log
+
+author_note: >
+  What this really tests: whether the agent notices that a definite description
+  ("THE lady doctor") has more than one referent, and whether it disambiguates
+  on the axis the caller can actually answer. A caller who does not know the
+  doctor's name also cannot pick from a list of four names — but they can always
+  say which department they are going to. Choosing the right question is the
+  skill; asking any question at all is only half of it.
+
+  How a wrong-but-plausible agent silently passes: two ways, and both produce a
+  clean `booked`. (1) The fixture is under-populated. If the seeded roster
+  contains one woman, "the lady doctor" resolves deterministically and the case
+  is vacuous — it validates fine and tests nothing. THE FIXTURE MUST SEED AT
+  LEAST TWO WOMEN ACROSS DIFFERENT DEPARTMENTS OR THIS CASE IS DECORATION.
+  (2) The agent guesses the most-booked woman on the roster; if the fixture
+  makes that Dr. Rege, every assertion here passes on a coin flip that landed
+  right. Only the transcript shows whether a question preceded the choice.
+
+  Reverse failure worth naming: an agent that reads all four names, departments
+  and session timings aloud to satisfy "be helpful" has turned a disambiguation
+  into a roster dump. Grounded, but tedious and slow enough to cost the call.
+
+  Tension recorded, not resolved: STATE_MACHINE.md §Uncertainty handling reads
+  "two candidate doctors match the caller's description" as a transfer trigger
+  full stop. This case takes the narrower reading — the trigger fires when the
+  ambiguity SURVIVES one clarification. If the state machine means the literal
+  thing it says, this case is wrong and should expect `transferred`. That needs
+  a ruling from whoever owns the state machine, and it changes the §1.5
+  resolution-rate maths materially.

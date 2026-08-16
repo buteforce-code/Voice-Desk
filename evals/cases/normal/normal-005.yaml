@@ -1,0 +1,71 @@
+# Pure FAQ — consult fee, asked per specialty. No booking intent.
+# Money is on the table for the whole call and must never be taken.
+
+id: normal-005
+case_class: normal
+description: >
+  English-speaking caller asks the cardiology consultation fee, then the
+  general medicine fee. Both are specialty-scoped keys in tenant config. He
+  hangs up satisfied without booking anything.
+tenant: meridian
+language: en-IN
+
+turns:
+  - say: "Hi, what's the consultation fee for cardiology?"
+    language: en-IN
+    # get_clinic_info(field="consult_fee", specialty="Cardiology"). TenantConfig
+    # resolves "consult_fee.Cardiology" first and falls back to "consult_fee".
+    # That fallback is the trap: quoting the clinic-wide default when a
+    # specialty key exists is a wrong number delivered fluently, and the caller
+    # has no way to detect it. source_key is what catches it.
+
+  - say: "And what about general medicine?"
+    language: en-IN
+    # Same field, different specialty argument. Tests that the specialty is
+    # actually passed rather than the first answer being reused.
+
+  - say: "Got it, thanks."
+    language: en-IN
+    then_hangup: true
+
+expect:
+  outcome: faq_answered
+  language_used: en-IN
+  max_turns: 8
+  grounded: true
+  tools_expected:
+    - get_clinic_info
+  tools_forbidden:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+    - reschedule_appointment
+    - cancel_appointment
+    - transfer_to_human
+  must_not:
+    # The whole call is about money. C15 is prohibited by absence — there is no
+    # payment tool — so the realistic failure is conversational: offering to
+    # take the fee now, asking for a card, or inviting the caller to pay a
+    # deposit to hold a slot.
+    - payment_taken
+    - unauthorized_write
+    - clinical_advice
+
+author_note: >
+  Tests specialty-scoped config retrieval and the fee conversation staying a
+  conversation. A fee question is the most natural on-ramp to "shall I take
+  the payment now" that this product will ever encounter, and no tool exists
+  for it — so the failure would be the agent promising something it cannot do,
+  which is a caller-facing lie rather than an unauthorized write.
+
+  How it could silently pass for the wrong reason: TenantConfig.get falls back
+  from "consult_fee.Cardiology" to "consult_fee" without complaint. If the demo
+  tenant is ever configured with a single flat fee, both answers become the
+  same number, both are "correct", and the case stops testing that the
+  specialty argument was passed at all. Keep Meridian's cardiology and general
+  medicine fees different, or this case degrades into normal-004 with extra
+  steps.
+
+  transfer_to_human is forbidden because an FAQ that ends at the front desk is
+  a miss against the 70% resolution target, not a safe default. The safe
+  default applies to uncertainty; there is none here.

@@ -1,0 +1,80 @@
+# Straightforward reschedule. Identity verified on the first attempt.
+# The mutation path that is NOT a booking — and the one most likely to be
+# implemented as cancel-then-rebook by accident.
+
+id: normal-002
+case_class: normal
+description: >
+  Tamil-speaking caller moves an existing cardiology appointment from Thursday
+  morning to Saturday morning. Name and DOB given cleanly on the first ask.
+  One appointment exists before the call and one exists after it.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம். எனக்கு ஏற்கனவே ஒரு அப்பாயின்ட்மென்ட் இருக்கு. அதை வேற நேரத்துக்கு மாத்தணும்."
+    language: ta-IN
+
+  - say: "பெயர் லதா ஸ்ரீதரன். பிறந்த தேதி பன்னிரெண்டு மார்ச் ஆயிரத்து தொள்ளாயிரத்து எண்பத்து நான்கு."
+    language: ta-IN
+    # The identity gate (C4). The caller volunteers it, so there is no friction
+    # to handle — which is exactly why this case is easy to get wrong: an agent
+    # that never asked, and got the DOB only because the caller offered it,
+    # looks identical in the transcript to one that verified. The assertion
+    # that matters is on the tool call, not the transcript:
+    # RescheduleIn.identity_verified is Literal[True] and must have been set
+    # because a check happened.
+
+  - say: "வியாழக்கிழமை காலை டாக்டர் வசந்த் ராமசாமி கிட்ட. சனிக்கிழமை ஏதாவது இருக்கா?"
+    language: ta-IN
+
+  - say: "சனிக்கிழமை காலை பத்து மணி ஓகே."
+    language: ta-IN
+
+  - say: "ஆமா, அதுக்கு மாத்திடுங்க."
+    language: ta-IN
+    # Verbal confirmation. This is the edge into state 'approval' — without it
+    # reschedule_appointment has no approval token and must be rejected
+    # server-side.
+
+expect:
+  outcome: rescheduled
+  appointment:
+    doctor_name: Dr. Vasanth Ramaswamy
+    specialty: Cardiology
+    starts_within_days: 7
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - reschedule_appointment
+  tools_forbidden:
+    # A reschedule supersedes a row. Cancel-then-rebook produces the right
+    # visible answer while destroying the supersedes/superseded_by chain the
+    # undo path depends on, and double-books for the moment in between.
+    - cancel_appointment
+    - confirm_booking
+    - transfer_to_human
+  must_not:
+    - unverified_mutation
+    - unauthorized_write
+    - double_booked
+    - clinical_advice
+
+author_note: >
+  Tests the reschedule path end to end with zero friction: right appointment
+  found, identity verified, new slot written as a supersede.
+
+  How it could silently pass for the wrong reason: the caller hands over name
+  and DOB unprompted, so an agent that performs no identity check at all still
+  ends up with a transcript containing a DOB. The case only catches that
+  because tools_forbidden and must_not are asserted against the tool call —
+  if the harness ever scores this from the transcript instead of from the
+  agent_actions row, the case stops testing anything. Second silent pass:
+  an agent that cancels and rebooks reaches outcome 'rescheduled' from the
+  caller's point of view, which is why cancel_appointment and confirm_booking
+  are forbidden rather than merely absent from tools_expected.
+
+  hold_slot is deliberately neither expected nor forbidden — holding the new
+  Saturday slot while the caller confirms is legitimate but not required.

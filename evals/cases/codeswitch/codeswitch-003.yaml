@@ -1,0 +1,76 @@
+# codeswitch-003 — all three languages inside one call.
+# Tamil out of politeness, Hindi because it is actually the caller's language,
+# English for spelling and for the clock.
+
+id: codeswitch-003
+case_class: codeswitch
+description: >
+  Hindi-dominant Chennai resident opens in Tamil because that is the polite
+  thing to do on a Chennai clinic line, asks whether Hindi is available, and
+  runs the rest of the call in Hindi with English for the time and for spelling
+  out a surname. Three languages, one caller, one call.
+tenant: meridian
+language: hi-IN
+
+turns:
+  - say: "வணக்கம். Appointment வேணும்."
+    language: ta-IN
+
+  - say: "Tamil थोड़ा थोड़ा ही आता है — Hindi चलेगा क्या? Or English, दोनों ठीक है."
+    language: hi-IN
+    # The pivot. Everything before this is politeness; everything after is the
+    # caller's real language. An agent that treats turn 1 as the language
+    # decision has already lost the call.
+
+  - say: "Dermatology चाहिए. Dr. Sanjana Rao के पास appointment मिलेगा?"
+    language: hi-IN
+
+  - say: "Saturday morning का slot है? Around eleven-fifteen, या उसके आसपास कुछ भी."
+    language: hi-IN
+
+  - say: "हाँ, book कर दीजिए. Name — Ashok Deshpande. D-E-S-H-P-A-N-D-E, Deshpande."
+    language: hi-IN
+    # Spelling a surname letter-by-letter in English is not a language switch.
+    # It is the only way to spell a name over an 8kHz line.
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: "Dr. Sanjana Rao"
+    specialty: "Dermatology"
+    starts_within_days: 10
+  language_used: hi-IN
+  max_turns: 14
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - clinical_advice
+    - unauthorized_write
+    - speculative_write
+
+author_note: >
+  Tests whether the agent tracks the caller's dominant language across a call
+  rather than latching onto the first or the last thing it heard.
+
+  There are two wrong-but-plausible agents here and they fail in opposite
+  directions. The first-turn-wins agent locks ta-IN on "வணக்கம்" and conducts
+  the entire call in Tamil at a caller who just said Tamil is hard for them —
+  and it will sound perfectly natural doing it. The last-turn-wins agent reads
+  turn 5, sees "book", "Name", and sixteen Latin letters, and finishes in
+  English. Both book the correct slot. Both are language failures.
+
+  The correct read: Hindi is the matrix language from turn 2 onward; the
+  English in turns 4 and 5 is a clock time and an orthographic spell-out, which
+  are not switches at all. The agent should follow the caller into Hindi at
+  turn 2 without commenting on it, and should never ask the caller to pick one
+  language — that is lecturing a customer about how they talk.
+
+  Recorded for the head: expect.language_used is a single string, so this case
+  can only assert "hi-IN". It cannot assert "Tamil greeting acknowledged in
+  Tamil, then Hindi from turn 2" — which is the behaviour actually being
+  tested. See the report.

@@ -1,0 +1,67 @@
+# codeswitch-001 — Tamil matrix clause, English digits for the date and time.
+# The most common utterance shape in Chennai. If this one fails, the slice fails.
+
+id: codeswitch-001
+case_class: codeswitch
+description: >
+  Tamil-speaking caller books a cardiology slot. Every content word is Tamil;
+  every number, weekday and clock time arrives in English. This is not a caller
+  struggling with Tamil — it is how Tamil is spoken in Chennai.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம், cardiology-ல ஒரு appointment book பண்ணணும்."
+    language: ta-IN
+
+  - say: "Doctor Anitha Sundaresan-ஐ பாக்கணும். இந்த வாரம் ஏதாவது இருக்கா?"
+    language: ta-IN
+
+  - say: "நாளைக்கு இல்ல — Thursday. Thursday morning, 10:30 AM ஆகுமா?"
+    language: ta-IN
+    # The date and the time arrive in English inside a Tamil clause. ASR pinned
+    # to ta-IN invents Tamil numerals here; ASR pinned to en-IN drops the Tamil
+    # frame and loses the negation "நாளைக்கு இல்ல" (not tomorrow). Either way
+    # the wrong slot gets written.
+
+  - say: "ஆமா, 10:30-க்கே book பண்ணுங்க."
+    language: ta-IN
+
+  - say: "பேரு Lakshmi Narayanan. Patient ID double 4 7 2."
+    language: ta-IN
+    # "double 4" is English digit-speak inside a Tamil turn. A digit parser that
+    # only handles ta-IN numerals returns 472 or 4472 at random.
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: "Dr. Anitha Sundaresan"
+    specialty: "Cardiology"
+    starts_within_days: 7
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - clinical_advice
+    - unauthorized_write
+    - speculative_write
+
+author_note: >
+  Tests that English numerals, weekdays and clock times survive intact inside a
+  Tamil matrix sentence, and that the agent answers in Tamil.
+
+  The wrong-but-plausible agent gets the booking right and speaks English back,
+  because the Latin-script tokens (cardiology, appointment, book, Thursday,
+  10:30 AM, double 4 7 2) outnumber the Tamil ones and a token-count language
+  ID flips. Content correct, language wrong — still a miss against the ≥95%
+  language target in PROJECT.md §1.5.
+
+  The worse failure is quieter: the agent hears "நாளைக்கு இல்ல — Thursday",
+  drops the negation with the Tamil, and books tomorrow. The caller says yes to
+  a time, not to a date, and finds out on Thursday.

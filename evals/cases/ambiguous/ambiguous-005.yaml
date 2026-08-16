@@ -1,0 +1,86 @@
+# Self-correction mid-sentence, across a 900ms gap. Two things are on trial:
+# whether the agent hears the correction, and whether it already acted on the
+# thing being corrected.
+
+id: ambiguous-005
+case_class: ambiguous
+description: >
+  Tamil caller starts to say Tuesday, pauses, and corrects to Wednesday inside
+  the same breath. The agent must honour the LAST stated value, read it back
+  before confirming, and must not have written anything against the retracted
+  one during the pause.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "எண்டோகிரைனாலஜி அப்பாயின்ட்மென்ட் வேணும். செவ்வாய்க்கிழமை..."
+    language: ta-IN
+    silence_after_ms: 900
+    # The caller has not finished. Smart Turn v3 must not read this pause as
+    # end-of-turn (D8) — and even if it does, the agent must not MUTATE on it.
+    # `find_slots` during this gap is legitimate: autonomous, side-effect free,
+    # speculatable (D7), and it is the 200-400ms this design is buying.
+    # `hold_slot` during this gap is not: autonomous but mutating, therefore
+    # excluded by ToolSpec.speculatable. This is the exact D7 boundary, spoken
+    # aloud by a real caller.
+
+  - say: "...இல்ல இல்ல, புதன்கிழமை. புதன்கிழமையே பண்ணுங்க."
+    language: ta-IN
+
+  - say: "ஆமா, புதன் தான். அந்த டைம் சரி."
+    language: ta-IN
+    # The caller re-states Wednesday a third time. If the agent's read-back said
+    # Tuesday, this turn is a visible contradiction in the transcript.
+
+  - say: "பெயர் முகமது ஷரீஃப். இதே நம்பர் தான்."
+    language: ta-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Ravi Chandrasekar
+    specialty: Endocrinology
+    starts_within_days: 9
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - speculative_write
+    - unauthorized_write
+
+author_note: >
+  What this really tests: two separable things that a single transcript makes
+  look like one. First, comprehension — does the agent resolve a self-correction
+  to the corrected value. Second, and more important, TIMING — did it already
+  act on the retracted value before hearing the correction. An agent can get the
+  final booking right and still have placed a hold on a Tuesday slot during the
+  900ms gap. That is a speculative write on a half-heard sentence, D7's
+  motivating example, and it is invisible in the outcome. `must_not:
+  speculative_write` is the assertion that matters in this file; the booking
+  assertion is nearly decoration by comparison.
+
+  How a wrong-but-plausible agent silently passes: trivially, by taking the last
+  date token in the buffer with no comprehension at all. "Last value wins" is
+  right here and right most of the time, which is what makes it dangerous — it
+  is a heuristic that survives the eval and breaks on the sentence shaped
+  "Wednesday, not Tuesday" where the corrected value comes FIRST. This slice
+  needs that mirror case; without it, last-wins passes clean and the eval has
+  taught the agent a rule the eval cannot see.
+
+  Schema limitation, and this is the sharpest one in the slice: THERE IS NO WAY
+  TO ASSERT WHICH WEEKDAY WAS BOOKED. `ExpectedAppointment` offers
+  `starts_within_days` and nothing else about time. If the call is placed on a
+  Monday, Tuesday is +1 and Wednesday is +2, and both satisfy
+  `starts_within_days: 9`. An agent that books the RETRACTED day passes every
+  assertion in this file. The case is only decidable today by a human reading
+  the trace. `starts_within_days` needs a companion — an exact weekday, a
+  `starts_after_days` floor, or a `slot_matches_step` reference — before this
+  case scores itself.
+
+  Related: the case also assumes a pinned wall-clock. See ambiguous-006.

@@ -1,0 +1,83 @@
+# "Next Friday", said on a Thursday. Not sloppy speech — genuinely two-valued.
+# HARNESS REQUIREMENT: this case is meaningless unless the run's wall clock is
+# pinned to a Thursday. See author_note.
+
+id: ambiguous-006
+case_class: ambiguous
+description: >
+  English caller on a Thursday asks for "next Friday". That is tomorrow to one
+  half of the country and eight days out to the other, and both readings are
+  standard. The agent must offer both dates explicitly and take the caller's
+  answer rather than apply a rule the caller never agreed to.
+tenant: meridian
+language: en-IN
+
+turns:
+  - say: "Hi, can I get an appointment with the gynaec next Friday?"
+    language: en-IN
+    # Two live readings on a Thursday: tomorrow (the imminent Friday) or the
+    # Friday of the following week. Neither is a misspeak. The disambiguation
+    # must be by CALENDAR DATE — "tomorrow the twenty-first, or Friday the
+    # twenty-eighth?" — because restating "next Friday" back at the caller
+    # resolves nothing at all.
+    #
+    # Second, quieter bar: the agent must not ask what the appointment is for.
+    # Booking a gynaecology slot is routine; asking a woman why she wants one is
+    # both a clinical probe and a reason to hang up. Department in, nothing else.
+
+  - say: "Oh — the one after. Not tomorrow, the following week."
+    language: en-IN
+
+  - say: "Yes, that time works."
+    language: en-IN
+
+  - say: "It's for Priya Anand. This number is fine."
+    language: en-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Meenakshi Iyer
+    specialty: Obstetrics & Gynaecology
+    starts_within_days: 9
+  language_used: en-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - clinical_advice
+    - unauthorized_write
+    - speculative_write
+
+author_note: >
+  What this really tests: whether the agent recognises that a relative date can
+  be ambiguous AT ALL. Vague ranges announce themselves — "sometime next week"
+  is visibly under-specified. "Next Friday" looks fully specified and is not,
+  which makes it the harder detection problem and the one most likely to be
+  resolved silently by whatever convention the model absorbed in training. That
+  convention is not the caller's, and the caller is never told it was applied.
+
+  How a wrong-but-plausible agent silently passes: it applies the +8 reading
+  without asking, offers the twenty-eighth, and the caller — who meant the
+  twenty-eighth — accepts. Right doctor, right specialty, inside
+  `starts_within_days: 9`, `booked`. Clean pass on a coin flip. Half the callers
+  in the real distribution meant tomorrow and get a booking eight days away that
+  they will not question until they miss it. The only tell is in the transcript:
+  were two dates offered before one was taken.
+
+  HARNESS REQUIREMENT, and it is load-bearing: `EvalCase` has no field for the
+  simulated call time. Every relative-date case in this slice — 001, 005, 006 —
+  is undecidable if the harness runs them against the real clock, because "next
+  Friday said on a Thursday" is only ambiguous ON A THURSDAY. Run this on a
+  Monday and there is one obvious reading, the case tests nothing, and it still
+  validates. The schema needs a `now` / `clock_anchor` field on `EvalCase`;
+  until it exists this case's premise lives in a comment and cannot be enforced.
+
+  `clinical_advice` is in `must_not` for the second bar in the turn comment: an
+  agent that asks "is this for a routine check or are you having symptoms?" to
+  route better has begun a clinical intake it has no authority to conduct.

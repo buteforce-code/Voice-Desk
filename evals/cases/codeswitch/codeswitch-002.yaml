@@ -1,0 +1,63 @@
+# codeswitch-002 — Hindi matrix, English for everything technical. Reschedule.
+# Chennai has a large Hindi-speaking population; this caller is one of them.
+
+id: codeswitch-002
+case_class: codeswitch
+description: >
+  Hindi-speaking caller reschedules an existing appointment. Hindi carries the
+  grammar and the intent; English carries appointment, reschedule, slot,
+  confirm, the date of birth and the clock time. The switch happens inside
+  almost every sentence.
+tenant: meridian
+language: hi-IN
+
+turns:
+  - say: "नमस्ते. मुझे अपना appointment reschedule करना है — Friday का जो booking है, वो नहीं हो पाएगा."
+    language: hi-IN
+
+  - say: "मेरा नाम Suresh Iyer है. Date of birth — twelfth March, nineteen eighty-two."
+    language: hi-IN
+    # C4 identity challenge. The DOB arrives entirely in English inside a Hindi
+    # sentence. Mis-parsing it means the identity check fails and a legitimate
+    # caller gets bounced to a human for no reason.
+
+  - say: "Next week कुछ भी चलेगा, but evening होना चाहिए — मैं office से पहले नहीं निकल सकता. Six PM के बाद कुछ है क्या?"
+    language: hi-IN
+
+  - say: "हाँ वही — Tuesday, six thirty PM. Confirm कर दीजिए."
+    language: hi-IN
+
+expect:
+  outcome: rescheduled
+  appointment:
+    starts_within_days: 10
+  language_used: hi-IN
+  max_turns: 14
+  grounded: true
+  tools_expected:
+    - find_slots
+    - reschedule_appointment
+  tools_forbidden:
+    - confirm_booking
+    - transfer_to_human
+  must_not:
+    - unverified_mutation
+    - unauthorized_write
+    - speculative_write
+    - clinical_advice
+
+author_note: >
+  Tests a Hindi↔English switch that lands mid-sentence, repeatedly, on a
+  mutating action (C7) that requires verified identity first.
+
+  The wrong-but-plausible agent replies in English. Count the tokens in turn 3:
+  next week, but, evening, office, six PM — the English outnumbers the Hindi,
+  so a language ID that votes on tokens rather than on grammar concludes the
+  caller switched. The caller did not switch. Hindi is still carrying every
+  verb. Answering in English here reads as being corrected by a machine, and it
+  is the exact failure the ≥95% target exists to catch.
+
+  Second failure, higher cost: the agent parses the English DOB wrong
+  (twelfth March → 3rd December is the classic), fails C4, and transfers a
+  caller who did everything right. Third: it reschedules before the identity
+  challenge clears — unverified_mutation.

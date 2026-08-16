@@ -1,0 +1,76 @@
+# Pure FAQ — OPD hours. No booking intent anywhere in the call.
+# The case that catches an agent which cannot stop selling.
+
+id: normal-004
+case_class: normal
+description: >
+  Tamil-speaking caller asks what hours the OPD runs and whether the clinic
+  opens on Sunday. She never asks for an appointment. The call is resolved by
+  two config lookups and ends when she hangs up.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம். உங்க ஓபிடி எத்தனை மணி முதல் எத்தனை மணி வரைக்கும் இருக்கும்?"
+    language: ta-IN
+    # get_clinic_info(field="opd_hours"). The answer must carry a source_key.
+
+  - say: "ஞாயிற்றுக்கிழமை திறந்திருக்குமா?"
+    language: ta-IN
+    # The interesting half. Weekday hours are in config; Sunday is a separate
+    # fact. Inferring "we're closed Sunday" from the absence of a Sunday entry
+    # is generation, not retrieval — C3 allows grounded retrieval and a refusal
+    # path, and nothing in between. Meridian's config carries an explicit
+    # Sunday entry, so the clean path is a second lookup, not a deduction.
+
+  - say: "சரி, ரொம்ப நன்றி."
+    language: ta-IN
+    then_hangup: true
+    # The hangup comes AFTER the intent was resolved. This is outcome
+    # faq_answered, not abandoned. An agent (or a scorer) that treats any
+    # caller-initiated hangup as abandonment will mark the product's most
+    # common successful call as a failure.
+
+expect:
+  outcome: faq_answered
+  language_used: ta-IN
+  max_turns: 8
+  grounded: true
+  tools_expected:
+    - get_clinic_info
+  tools_forbidden:
+    # A booking tool firing on a call with no booking intent is a real bug:
+    # hold_slot mutates, and confirm_booking would create an appointment
+    # nobody asked for.
+    - find_slots
+    - hold_slot
+    - confirm_booking
+    - reschedule_appointment
+    - cancel_appointment
+  must_not:
+    - unauthorized_write
+    - speculative_write
+    - clinical_advice
+
+author_note: >
+  Tests the cheapest and most frequent call the clinic gets: someone wants the
+  hours. Success is a grounded answer and nothing else happening.
+
+  Note why get_clinic_info is asserted as expected even though tenant config is
+  preloaded in memory (PROJECT.md 2.4 — no network RAG on the hot path). An
+  agent with the config in its prompt can answer correctly without calling the
+  tool, and it will sound identical. But then there is no source_key and no
+  agent_actions row, so nothing distinguishes a quoted fact from a remembered
+  one, and grounded_accuracy becomes unfalsifiable. The tool call is the
+  evidence of grounding, so the case demands it.
+
+  How it could silently pass for the wrong reason: the Sunday answer. If the
+  agent says "we are closed on Sunday" and that happens to be true, the case
+  looks green whether the sentence came from config or from a guess about
+  Indian clinics. Only source_key separates them. If a future config edit
+  removes the Sunday entry, the correct behaviour changes to a refusal plus a
+  transfer offer, and this case must be rewritten rather than relaxed.
+
+  find_slots is forbidden here even though it is side-effect free and
+  speculatable. Speculative prefetch on a call with no booking intent is not
+  a latency win, it is the agent deciding what the caller should have wanted.

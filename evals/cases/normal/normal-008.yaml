@@ -1,0 +1,81 @@
+# Booking in English, start to finish, with a named doctor.
+# The third language, and the one an English-first model will be best at —
+# which makes a pass here the weakest evidence in the slice.
+
+id: normal-008
+case_class: normal
+description: >
+  English-speaking caller books a Wednesday morning orthopaedics slot and names
+  the doctor he has seen before. One doctor matches, unambiguously. No identity
+  friction.
+tenant: meridian
+language: en-IN
+
+turns:
+  - say: "Good morning. I'd like to book an appointment with orthopaedics, please."
+    language: en-IN
+
+  - say: "Do you have Dr. Naveen Balakrishnan? I've seen him before."
+    language: en-IN
+    # A named-doctor request that resolves to exactly one doctor on Meridian's
+    # roster. Two doctors sharing a surname, or "the knee doctor", belong in
+    # edge/ and ambiguous/ respectively — this case is the version where the
+    # lookup is clean, so a failure here is a lookup bug and not a
+    # disambiguation bug.
+
+  - say: "Wednesday morning works. Nine thirty is fine."
+    language: en-IN
+
+  - say: "Yes, please book that."
+    language: en-IN
+
+  - say: "The name is Arun Prakash. You can use this number."
+    language: en-IN
+    # "this number" means the ANI. The msisdn on ConfirmBookingIn comes from
+    # the call session, never from anything the caller or the model asserted.
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Naveen Balakrishnan
+    specialty: Orthopaedics
+    starts_within_days: 7
+  language_used: en-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+    - cancel_appointment
+    - reschedule_appointment
+  must_not:
+    - clinical_advice
+    - unauthorized_write
+    - speculative_write
+    - double_booked
+
+author_note: >
+  Tests the English booking path and a doctor named by the caller resolving to
+  a real roster entry rather than to whatever the model remembers a plausible
+  Indian orthopaedic surgeon being called.
+
+  get_clinic_info is deliberately neither expected nor forbidden. The doctor
+  roster is preloaded into memory at call start (PROJECT.md 2.4 — no network
+  RAG on the hot path), so an agent may legitimately resolve the name without
+  a tool call, or may look it up. Both are fine; inventing a doctor_id is not,
+  and that is caught by the appointment assertion rather than by tool choice.
+
+  How it could silently pass for the wrong reason, and this is the weakest case
+  in the slice: the reasoning model is strongest in English and the ASR path is
+  easiest in English, so this case will very likely be the first to go green
+  and the last to regress. A green normal-008 says almost nothing about
+  normal-001 or normal-007. Read the three booking cases as a set — if
+  008 passes while 001 or 007 fails, the product does not work, and the slice
+  average will hide that unless the by_class breakdown is read per case.
+
+  Second silent pass: starts_within_days: 7 is loose enough that an agent which
+  books the wrong Wednesday still satisfies it. The exact-slot assertion lives
+  in normal-009 via slot_id_from_step; this case does not have it.

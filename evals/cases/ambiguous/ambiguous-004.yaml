@@ -1,0 +1,82 @@
+# "Morning" is a word the caller owns and the config does not.
+# Meridian's tenant config (assumed fixture):
+#   opd_hours.morning    08:00-11:00
+#   opd_hours.afternoon  11:30-14:00
+#   opd_hours.evening    17:00-20:30
+# 11:30 is colloquially morning and configurationally afternoon. Both readings
+# are correct. Only the caller gets to pick.
+
+id: ambiguous-004
+case_class: ambiguous
+description: >
+  Tamil caller asks for a Cardiology slot "in the morning". Dr. Anitha
+  Varadhan's 08:00-11:00 morning session is full; the earliest free slot is
+  11:30, which tenant config files under the afternoon session. The agent must
+  surface the clock time and let the caller decide whether it counts.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "காலைல ஏதாவது ஸ்லாட் இருக்கா? கார்டியாலஜி."
+    language: ta-IN
+    # Two silent failure modes, exactly opposite:
+    #   (a) Agent rules 11:30 IS morning, books it, never says the time. The
+    #       caller arrives at 09:00 and waits two and a half hours.
+    #   (b) Agent rules 11:30 is NOT morning, filters it out, reports "no
+    #       morning slots". A booking lost to a definition the caller never saw.
+    # The resolution is not to pick a definition. It is to speak the number.
+
+  - say: "பதினொன்னரையா? அது பரவால்ல, அதுவே போதும்."
+    language: ta-IN
+    # The caller resolves their own ambiguity the instant they hear "11:30".
+    # This turn is only utterable if the agent said the clock time.
+
+  - say: "ஆமா. புக் பண்ணுங்க."
+    language: ta-IN
+
+  - say: "பெயர் ஜி. சுந்தரம். இதே நம்பர்."
+    language: ta-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Anitha Varadhan
+    specialty: Cardiology
+    starts_within_days: 3
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - get_clinic_info
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - unauthorized_write
+    - speculative_write
+
+author_note: >
+  What this really tests: whether the agent resolves a vague quantifier by
+  QUOTING GROUND TRUTH back to the caller rather than by adopting a definition
+  of its own. "Morning" is not a config key. `opd_hours.morning` is, and it says
+  08:00-11:00, and the slot on offer is outside it. The correct move is to state
+  "the earliest with Dr. Varadhan is 11:30 — our morning session ends at 11:00,
+  so that one is in the next session; is that alright?" Every fact in that
+  sentence traces to a config key, which is what `grounded: true` is asserting.
+
+  How a wrong-but-plausible agent silently passes: failure mode (a) above books
+  the same doctor, the same specialty, the same slot, inside
+  `starts_within_days: 3`. It passes every machine-checkable assertion in this
+  file. The caller is the only one who finds out, two and a half hours later, in
+  the waiting room. The ONLY thing separating a pass from a fail here is whether
+  the string "11:30" was spoken before the caller confirmed — and the schema has
+  no way to say "this value must appear in the agent's speech". `grounded: true`
+  gets close in spirit but it constrains claims the agent DID make, not claims
+  it should have made and omitted. An `utterance_must_contain` assertion would
+  make this case decidable by machine; today it needs a transcript grader.
+
+  Failure mode (b) is the safe one and it is visibly caught: it ends in
+  `transferred` or `abandoned` and fails the outcome assertion outright. The
+  dangerous failure is the one that looks like success — as usual.

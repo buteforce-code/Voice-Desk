@@ -1,0 +1,83 @@
+# EDGE — the caller talks over the agent. Twice, and the second one is a
+# correction arriving while the agent is mid-way to a write.
+
+id: edge-003
+case_class: edge
+description: >
+  Indian-English caller interrupts the agent twice: once while it is reading a
+  slot list, and once while it is reading back a confirmation summary with the
+  patient's name wrong. The agent must yield the floor, keep the barged-in audio,
+  and treat the second interruption as a return to draft rather than a comment
+  on a write it has already made.
+tenant: meridian
+language: en-IN
+
+turns:
+  - say: "Hi, I need to see a cardiologist this week."
+    language: en-IN
+
+  - say: "Wednesday — Wednesday five thirty is fine."
+    language: en-IN
+    barge_in_after_ms: 1800
+    # BARGE-IN 1 — 1.8s into the agent reading out five slots. The caller names
+    # the slot explicitly (day + time) so there is no referent ambiguity to
+    # hide behind: the only question is whether the agent stops talking and
+    # whether the overlapped audio survives to the transcript. A pipeline that
+    # keeps playing TTS over the caller loses the whole utterance, and the
+    # agent then finishes its list and asks a question already answered.
+
+  - say: "Yes, book it. The name is Deepa Shanmugam."
+    language: en-IN
+
+  - say: "No, wait — Deepa. D-E-E-P-A. You read back Devi."
+    language: en-IN
+    barge_in_after_ms: 900
+    # BARGE-IN 2 — 0.9s into the agent's confirmation read-back, which is the
+    # narrowest window in the whole call. This is the one that matters. If the
+    # agent has already fired confirm_booking and is merely narrating the
+    # result, the correction lands after the write and there is a row with the
+    # wrong patient on it. Read-back belongs in draft/validate; the write
+    # belongs after the caller has heard it and agreed. Correcting a spelling
+    # must send the call back through repair, not produce a second appointment.
+
+  - say: "Yes, that's right. Go ahead."
+    language: en-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Suresh Raghunathan
+    specialty: Cardiology
+    starts_within_days: 7
+  language_used: en-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - unauthorized_write
+    - speculative_write
+    - double_booked
+
+author_note: >
+  What this really tests: that the agent's own speech is interruptible and that
+  interruption is lossless. Two distinct failures hide here — losing the caller's
+  words under its own TTS, and having already written before it finished
+  speaking about writing. The second is the interesting one: a read-back that
+  narrates a completed write is not a read-back, it is a receipt, and no
+  correction can reach it. double_booked is asserted because the natural bad fix
+  — treat the correction as a fresh booking request — creates a second row for
+  the same patient in the same slot.
+
+  How it silently passes for the wrong reason: if the agent's utterances are
+  short, a barge_in_after_ms of 1800 may land after it has already stopped
+  speaking, and the "interruption" is just a normal turn. The harness must
+  assert actual overlap — that TTS was still playing when caller audio started —
+  or this case degrades into an ordinary booking. Equally, an agent that has not
+  yet implemented read-back at all will pass barge-in 2 for free, because there
+  was nothing to interrupt; the trace must show a read-back utterance existed
+  and was cut short.

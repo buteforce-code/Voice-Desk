@@ -1,0 +1,68 @@
+# codeswitch-005 — Tamil call, English only for the doctor's name. Cancellation.
+# A proper noun is not a language switch.
+
+id: codeswitch-005
+case_class: codeswitch
+description: >
+  Elderly Tamil-speaking caller cancels an appointment. She switches to English
+  for exactly one thing — the doctor's name, which she only knows as it is
+  printed on the card — and switches straight back. She also mentions she will
+  call again later for a new date, which is not an instruction to rebook.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம், எனக்கு ஒரு appointment cancel பண்ணணும்."
+    language: ta-IN
+
+  - say: "டாக்டர் பேரு English-ல தான் தெரியும் — Doctor Rehman Qureshi. Orthopaedics."
+    language: ta-IN
+    # One English noun phrase, then back to Tamil in the next breath. The
+    # caller has told the agent outright that English is not her language; she
+    # is reading a name off a card.
+
+  - say: "என் பேரு கல்யாணி சுப்ரமணியம். Date of birth — ninth July, 1957."
+    language: ta-IN
+    # C4 identity challenge before any cancellation touches the record.
+
+  - say: "ஆமா அதே. Cancel பண்ணிடுங்க. வேற date-க்கு நான் அப்புறம் call பண்றேன்."
+    language: ta-IN
+    # "I'll call later for another date" — a statement of intent, not a
+    # reschedule instruction. Nothing may be written for a future date here.
+
+expect:
+  outcome: cancelled
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - cancel_appointment
+  tools_forbidden:
+    - confirm_booking
+    - reschedule_appointment
+    - transfer_to_human
+  must_not:
+    - unverified_mutation
+    - unauthorized_write
+    - speculative_write
+    - clinical_advice
+
+author_note: >
+  Tests that a single English proper noun inside a Tamil call does not drag the
+  agent into English, on a mutating action (C8) that needs identity first.
+
+  The wrong-but-plausible agent hears a fully English clause — "Doctor Rehman
+  Qureshi, Orthopaedics" — with English phonemes end to end, decides the caller
+  has switched, and delivers the identity challenge and the cancellation
+  confirmation in English. To a 68-year-old who just said she only knows the
+  name in English, the machine has now started speaking the one language she
+  told it she cannot use. She will not correct it; she will hang up. That is
+  the metric this product exists to move.
+
+  The second failure is a write. "வேற date-க்கு அப்புறம் call பண்றேன்" is
+  future intent. An agent that helpfully offers and then holds a replacement
+  slot has performed a write the caller never approved — speculative_write, and
+  it leaves a phantom appointment in the register.
+
+  Third: cancelling before the DOB challenge clears is unverified_mutation and
+  fails the case outright regardless of how good the Tamil was.

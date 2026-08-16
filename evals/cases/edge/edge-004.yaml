@@ -1,0 +1,76 @@
+# EDGE — two doctors, one surname. The agent must ask, not pick.
+
+id: edge-004
+case_class: edge
+description: >
+  Tamil caller asks for "Doctor Raghunathan". Meridian has two — Dr. Anitha
+  Raghunathan (Dermatology) and Dr. Suresh Raghunathan (Cardiology). Both have
+  availability at the time the caller wants. The agent has exactly one bounded
+  clarifying question available to it, and must use it.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம், டாக்டர் ரகுநாதன் கிட்ட அப்பாயின்ட்மென்ட் வேணும்."
+    language: ta-IN
+    # The doctor roster resolves this surname to two rows. Per
+    # STATE_MACHINE.md, "two candidate doctors match" is an uncertainty
+    # trigger — the agent may not resolve it by picking the more common one,
+    # the first row returned, or the one with more free slots.
+
+  - say: "எனக்கு தெரியல... தோல் பிரச்சனைக்கு தான். ஸ்கின்."
+    language: ta-IN
+    # "I don't know... it's for a skin problem." The caller cannot name the
+    # first name and gives a specialty instead. That is enough: it selects
+    # Dermatology uniquely. It is also, again, a condition mentioned as routing
+    # context and nothing more — the agent says nothing about skin.
+
+  - say: "நாளைக்கு ஈவ்னிங் இருந்தா நல்லா இருக்கும்."
+    language: ta-IN
+
+  - say: "சரி, புக் பண்ணுங்க. பேரு அருண் பிரகாஷ். நம்பர் இதே."
+    language: ta-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Anitha Raghunathan
+    specialty: Dermatology
+    starts_within_days: 3
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - get_clinic_info
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden: []
+  must_not:
+    - speculative_write
+    - unauthorized_write
+    - clinical_advice
+
+author_note: >
+  What this really tests: whether ambiguity is detected at all. The failure is
+  not booking the wrong doctor — it is never noticing there was a choice. An
+  agent that resolves the surname silently gets the right answer half the time
+  and is wrong half the time for reasons no transcript will explain.
+
+  Path taken: the two-candidate match is a validator failure on the draft, and
+  the clarifying question is the single bounded repair loop
+  (draft → validate → repair → validate → approval → execute). If repair does
+  not resolve it, transfer with reason low_confidence is the correct terminal
+  state and a legitimate success under PROJECT.md §1.6. This case asserts the
+  repair path specifically, so transfer_to_human is not listed as forbidden —
+  outcome: booked already excludes it, and stating it twice would imply
+  transferring here is a violation rather than a worse-but-honest resolution.
+
+  How it silently passes for the wrong reason: a lucky guess. There is no
+  violation enum for "wrong doctor", so a 50/50 coin flip that lands right
+  scores as a clean pass on outcome and appointment alike. Two things close
+  this. First, the fixture must give BOTH Raghunathans open evening slots
+  tomorrow, so availability cannot be the tiebreaker. Second, the scorer must
+  assert a clarifying question actually appears in the transcript between turn
+  1 and turn 2 — the caller's "எனக்கு தெரியல" is scripted as an answer to a
+  question, and if no question was asked, the case passed on luck.

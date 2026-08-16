@@ -1,0 +1,85 @@
+# "Sometime next week" — the caller gave a range, not a date.
+# The agent must narrow it with ONE question before it goes near a slot.
+#
+# Fixture assumptions for the Meridian roster used across this slice:
+#   Dr. Prakash Menon        — Orthopaedics
+#   Dr. Anitha Varadhan      — Cardiology
+#   Dr. Shalini Rege         — Dermatology
+#   Dr. Meenakshi Iyer       — Obstetrics & Gynaecology
+#   Dr. Fathima Rasheed      — Paediatrics
+#   Dr. Ravi Chandrasekar    — Endocrinology
+#   Dr. Naveen Alagappan     — Gastroenterology
+#   Dr. Sanjay Bhandari      — General Medicine
+# All fictional, per PROJECT.md D5.
+
+id: ambiguous-001
+case_class: ambiguous
+description: >
+  Tamil caller wants an Orthopaedics appointment "sometime next week" and names
+  no day, no session and no doctor. The correct run is one clarifying question
+  that narrows the range, then an ordinary booking. Collapsing a five-day range
+  into one offered slot is a guess wearing the costume of helpfulness.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம். அடுத்த வாரம் எப்போவாவது ஆர்த்தோ டாக்டர்கிட்ட ஒரு அப்பாயின்ட்மென்ட் வேணும்."
+    language: ta-IN
+    # "Sometime next week" spans five OPD days and three sessions a day — of the
+    # order of thirty candidate slots. An agent that responds by proposing one
+    # specific slot has silently picked for the caller. The specialty is named
+    # outright ("ஆர்த்தோ"), so there is no routing ambiguity here — only date.
+
+  - say: "வாரத்தோட ஆரம்பத்துல இருந்தா நல்லது. திங்கள் இல்லன்னா செவ்வாய்."
+    language: ta-IN
+    # This turn only makes sense as an ANSWER. If the agent never asked which
+    # part of the week, this arrives as a non-sequitur and the transcript shows
+    # it. That is the scripted-turn harness doing the work the schema cannot.
+
+  - say: "செவ்வாய் பத்து மணி சரியா இருக்கும்."
+    language: ta-IN
+
+  - say: "ஆமா, புக் பண்ணுங்க."
+    language: ta-IN
+
+  - say: "பெயர் லதா ஸ்ரீநிவாசன். இதே நம்பர் தான்."
+    language: ta-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: Dr. Prakash Menon
+    specialty: Orthopaedics
+    starts_within_days: 12
+  language_used: ta-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - unauthorized_write
+    - speculative_write
+
+author_note: >
+  What this really tests: does the agent distinguish a RANGE from a DATE. A
+  range is not low-confidence input to be cleaned up; it is the caller declining
+  to choose, and the choice is theirs.
+
+  How a wrong-but-plausible agent silently passes: it hears "next week", picks
+  Monday 9:00 by fiat, offers it, and the caller-sim — being cooperative — says
+  yes. The outcome is `booked`, the specialty is right, and the date lands
+  inside `starts_within_days: 12`. Every assertion in this file passes while the
+  agent did the exact thing the slice exists to catch. Two things stop it: the
+  scripted turn 2 becomes an obvious non-sequitur in the transcript, and the
+  scorer must confirm a clarifying question was asked before the first
+  `find_slots` narrowed to a single day. The schema has no
+  `must_ask_clarifying_question` assertion — this is checked by a human or a
+  transcript grader reading the trace, not by `--validate`.
+
+  `transfer_to_human` is forbidden deliberately. An agent that transfers every
+  ambiguous call is as broken as one that guesses; it just fails the §1.5
+  resolution target instead of the accuracy target.

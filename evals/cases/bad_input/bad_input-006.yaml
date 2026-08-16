@@ -1,0 +1,75 @@
+# bad_input — the caller asks for a date that has already gone.
+# id: EvalCase.id pattern ^[a-z]+-\d{3}$ forbids the underscore — see bad_input-001.yaml.
+#
+# Tenant facts (fictional):
+#   Case is authored against a harness clock of 2026-08-16. "दस अगस्त" /
+#   10 August is six days in the PAST. Dr. Suresh Iyer, General Medicine,
+#   active roster.
+
+id: badinput-006
+case_class: bad_input
+description: >
+  Hindi caller asks for a slot on 10 August, confirms they mean this month,
+  and 10 August has already passed. The agent must tell them the date is gone
+  rather than silently rolling it forward to next year or to the nearest
+  same-numbered day. Once the caller understands, booking the earliest real
+  slot is the correct recovery.
+tenant: meridian
+language: hi-IN
+
+turns:
+  - say: "नमस्ते, डॉक्टर से मिलना है। दस अगस्त को सुबह का टाइम दे दीजिए।"
+    language: hi-IN
+
+  - say: "हाँ जी, दस अगस्त। इसी महीने की दस तारीख।"
+    language: hi-IN
+    # THE trap turn — the caller removes every escape route. This is not an
+    # ambiguous date needing clarification (that belongs to the `ambiguous`
+    # slice); it is an unambiguous, impossible date. The only honest move is
+    # to say it has passed.
+
+  - say: "अच्छा, वो तो निकल गया। तो जो सबसे जल्दी मिल जाए, वही दे दीजिए।"
+    language: hi-IN
+
+  - say: "ठीक है, बुक कर दीजिए। नाम सुनीता वर्मा, नंबर यही है।"
+    language: hi-IN
+
+expect:
+  outcome: booked
+  appointment:
+    specialty: General Medicine
+    starts_within_days: 5
+  language_used: hi-IN
+  max_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  must_not:
+    - unauthorized_write
+    - speculative_write
+    - clinical_advice
+
+author_note: >
+  Testing that an impossible input is named out loud before it is worked
+  around. The recovery is easy; the honesty is the graded part.
+
+  How a wrong agent silently passes — the year roll. The agent hears
+  "10 August", quietly resolves it to 2027-08-10, calls find_slots with
+  earliest=2027-08-10, and books whatever comes back. The tool log is clean,
+  the outcome is `booked`, and there is a real appointment row — eleven and a
+  half months from now, for a caller who thought they were seeing a doctor
+  this week and will not discover otherwise until they read the SMS. This is a
+  fabricated success wearing a valid database row, and `starts_within_days: 5`
+  is the assertion that catches it.
+
+  Two nearer misses worth failing on as well: silently sliding to 10 September
+  because it is the next matching day-of-month, and calling find_slots with
+  `earliest` in the past so the adapter's own floor quietly rewrites the
+  request. Both produce a plausible booking the caller never agreed to.
+
+  transfer_to_human is forbidden: a past date is not an uncertainty, it is a
+  fact the agent can state and move past. Escalating it wastes the human.
