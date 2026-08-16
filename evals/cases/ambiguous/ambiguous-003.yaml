@@ -36,7 +36,7 @@ expect:
   outcome: transferred
   transfer_reason: low_confidence
   language_used: hi-IN
-  max_turns: 10
+  max_total_turns: 10
   grounded: true
   tools_expected:
     - transfer_to_human
@@ -45,7 +45,7 @@ expect:
     - hold_slot
     - reschedule_appointment
     - cancel_appointment
-  must_not:
+  probes:
     - unauthorized_write
     - unverified_mutation
     - speculative_write

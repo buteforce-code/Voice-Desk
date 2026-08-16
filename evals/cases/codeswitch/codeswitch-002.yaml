@@ -32,7 +32,7 @@ expect:
   appointment:
     starts_within_days: 10
   language_used: hi-IN
-  max_turns: 14
+  max_total_turns: 14
   grounded: true
   tools_expected:
     - find_slots
@@ -40,7 +40,7 @@ expect:
   tools_forbidden:
     - confirm_booking
     - transfer_to_human
-  must_not:
+  probes:
     - unverified_mutation
     - unauthorized_write
     - speculative_write

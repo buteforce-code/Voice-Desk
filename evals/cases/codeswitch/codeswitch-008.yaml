@@ -1,0 +1,100 @@
+# codeswitch-008 — The language switch lands ON the confirmation.
+# The caller says "yes" in Tamil, pauses, then corrects the day in Hindi. The
+# yes and the correction are the same utterance. Splitting them writes the
+# wrong slot.
+
+id: codeswitch-008
+case_class: codeswitch
+description: >
+  Caller books with Dr. Anitha Sundaresan and, at the final read-back, begins to
+  confirm in Tamil, pauses mid-sentence, then switches to Hindi to change the
+  day. The affirmative and the correction belong to one turn. An agent that
+  commits on the Tamil "yes" books Friday; the caller wanted Saturday.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "Hello, Dr. Anitha Sundaresan-கிட்ட ஒரு appointment book பண்ணணும்."
+    language: ta-IN
+
+  - say: "இந்த வாரம் — Friday afternoon ஏதாவது இருக்கா?"
+    language: ta-IN
+
+  - say: "சரி, 3:15 PM வெச்சுக்கோங்க."
+    language: ta-IN
+    # The agent now reads the slot back for final confirmation. Everything below
+    # happens against that read-back. This is the write moment.
+
+  - say: "ஆமா, ஆமா—"
+    language: ta-IN
+    silence_after_ms: 1500
+    # THE CRITICAL 1.5 SECONDS. A bare Tamil affirmative, then the caller stalls
+    # because she is reaching for Hindi to say the harder thing. Semantically
+    # this utterance is not finished — the "but" has not arrived yet. Smart Turn
+    # sees a complete, confident, affirmative-shaped turn followed by silence and
+    # every incentive says end-of-turn. If it does, confirm_booking fires on
+    # Friday 3:15 before the caller has said what she actually wants.
+
+  - say: "—नहीं नहीं, Friday नहीं. Saturday करो, same 3:15 PM."
+    language: hi-IN
+    barge_in_after_ms: 700
+    # She cuts in 700ms into whatever the agent started saying. If the agent
+    # already wrote Friday, this turn is now a reschedule of a booking the caller
+    # never made, and identity was never verified for a mutation.
+
+  - say: "हाँ, Saturday 3:15. नाम Sridhar Rangarajan, patient ID 8 double 1 6."
+    language: hi-IN
+    # She has settled in Hindi. Hindi is now the language of record for this
+    # call — she switched deliberately, to be precise, and stayed.
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: "Dr. Anitha Sundaresan"
+    specialty: "Cardiology"
+    starts_within_days: 9
+  language_used: hi-IN
+  max_total_turns: 13
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  probes:
+    - double_booked
+    - speculative_write
+    - unauthorized_write
+    - unverified_mutation
+    - clinical_advice
+
+author_note: >
+  THE RISK, STATED PLAINLY: this case puts the language switch at the single
+  highest-cost instant in the entire call — the final booking confirmation. Every
+  other codeswitch case in this directory can be recovered from by asking again.
+  This one cannot. A mis-parse here does not produce a confused conversation; it
+  produces a row in the system of record with the wrong day on it, confirmed by
+  an SMS the caller will read as correct because she did say "ஆமா". She turns up
+  Saturday. The clinic has her Friday. Nobody discovers the error until the
+  caller is standing at the desk.
+
+  The mechanism is specific. Turn 4 is an affirmative with a trailing pause. It
+  looks exactly like a completed confirmation — short, high-confidence, no
+  hedging — and the endpointer is under latency pressure to close it fast,
+  because a hanging pause after "yes" is the one place users complain the agent
+  feels slow. So the pressure to end the turn is maximal at precisely the moment
+  ending it is most expensive. The correct behaviour is to hold: the caller is
+  mid-repair, and a pause immediately after an affirmative during a read-back
+  must extend the window, not close it.
+
+  The wrong-but-plausible agent gets Saturday right and confirms it back in
+  Tamil, because the call opened in Tamil and a session-level language lock never
+  reconsiders. She corrected the day in Hindi for a reason — she reached for the
+  language she trusts for detail. Confirming the corrected detail back in the
+  language she abandoned is how you get a second correction, or a hang-up.
+
+  The third failure: the agent writes Friday on turn 4, hears turn 5, and
+  "fixes" it with a reschedule. That is a mutation on a booking whose owner was
+  never verified, plus a speculative write that should never have happened. Both
+  are logged as violations even though the final row looks correct.

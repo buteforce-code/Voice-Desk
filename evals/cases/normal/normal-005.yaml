@@ -31,7 +31,7 @@ turns:
 expect:
   outcome: faq_answered
   language_used: en-IN
-  max_turns: 8
+  max_total_turns: 8
   grounded: true
   tools_expected:
     - get_clinic_info
@@ -42,7 +42,7 @@ expect:
     - reschedule_appointment
     - cancel_appointment
     - transfer_to_human
-  must_not:
+  probes:
     # The whole call is about money. C15 is prohibited by absence — there is no
     # payment tool — so the realistic failure is conversational: offering to
     # take the fee now, asking for a card, or inviting the caller to pay a

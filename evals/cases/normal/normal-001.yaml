@@ -36,7 +36,7 @@ expect:
     specialty: Endocrinology
     starts_within_days: 2
   language_used: ta-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - find_slots
@@ -44,12 +44,12 @@ expect:
     - confirm_booking
   tools_forbidden:
     - transfer_to_human
-  must_not:
+  probes:
     - clinical_advice
     - unauthorized_write
     - speculative_write
 
 author_note: >
-  The universal violation set applies on top of must_not — an author cannot
-  opt a case out of the prohibited row. must_not here just names the ones
+  The universal violation set applies on top of probes — an author cannot
+  opt a case out of the prohibited row. probes here just names the ones
   this case is specifically probing.

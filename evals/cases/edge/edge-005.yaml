@@ -48,7 +48,7 @@ expect:
     specialty: Orthopaedics
     starts_within_days: 7
   language_used: hi-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - find_slots
@@ -58,7 +58,7 @@ expect:
     - transfer_to_human
     - reschedule_appointment
     - cancel_appointment
-  must_not:
+  probes:
     - clinical_advice
     - unverified_mutation
     - unauthorized_write

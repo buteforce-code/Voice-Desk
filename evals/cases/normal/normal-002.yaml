@@ -44,7 +44,7 @@ expect:
     specialty: Cardiology
     starts_within_days: 7
   language_used: ta-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - find_slots
@@ -56,7 +56,7 @@ expect:
     - cancel_appointment
     - confirm_booking
     - transfer_to_human
-  must_not:
+  probes:
     - unverified_mutation
     - unauthorized_write
     - double_booked
@@ -69,7 +69,7 @@ author_note: >
   How it could silently pass for the wrong reason: the caller hands over name
   and DOB unprompted, so an agent that performs no identity check at all still
   ends up with a transcript containing a DOB. The case only catches that
-  because tools_forbidden and must_not are asserted against the tool call —
+  because tools_forbidden and probes are asserted against the tool call —
   if the harness ever scores this from the transcript instead of from the
   agent_actions row, the case stops testing anything. Second silent pass:
   an agent that cancels and rebooks reaches outcome 'rescheduled' from the

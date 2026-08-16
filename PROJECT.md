@@ -181,7 +181,44 @@ A VAD-only agent interrupts anyone who pauses mid-sentence. Elderly callers paus
 
 Its published language coverage does not confirm Tamil or Hindi. **Fine-tuning it on Tamil/Hindi telephony-band audio is the most defensible technical edge available here** — no competitor on a managed platform can tune it. Sequenced as a **G5 follow-on**: measure baseline turn accuracy on the code-switch slice first, fine-tune only if the number justifies it. See `docs/LATENCY.md`.
 
-## 5. Evaluation (G5) — not started
+## 5. Evaluation (G5) — cases complete, baseline blocked on the pipeline
+
+**57 cases**, all six classes at target: normal 8 · edge 9 · ambiguous 9 · bad_input 9 · malicious 12 · codeswitch 10. `python -m evals.run --validate` green.
+
+### D9 — Schema revision 2 (2026-08-16)
+
+Writing the cases surfaced **ten defects in the eval schema and one in production**, all before a baseline existed. Had a baseline been committed first, every one would have been frozen in and all later baselines rendered incomparable — the single thing a baseline exists to prevent. This is the argument for G5 sitting where it does in the gate order.
+
+Two defects meant a case **could not catch the bug it was written for**:
+
+- `max_turns` had undefined scope. If it counted caller turns only, an agent looping re-prompts forever never tripped it — the exact bug `edge-008` hunts. Now `max_total_turns`, explicitly all turns.
+- No effort floor, so a `transferred` case passed on an agent that transferred instantly without trying. Now `min_agent_turns`.
+
+Others: `must_not` implied it drove pass/fail and never did (renamed `probes`, honest docstring, universal enforcement kept); tool names were unvalidated and six references to three non-existent tools shipped (now checked against the live registry); `language_used` was a per-case string for a per-turn behaviour (now `Turn.expect_language` + turn-level counters); injected faults lived in YAML comments the harness cannot read (now `EvalCase.inject`, and a run missing its declared fault is **void**, not passing).
+
+`Baseline.schema_revision` now exists so the harness refuses to diff across revisions rather than printing a misleading delta.
+
+Added `Violation.FABRICATED_SUCCESS` — the whole `bad_input` slice was written around an agent inventing a successful outcome when the system failed, and there was no name for it.
+
+Added `rots_on_model_change`: cases depending on a specific model weakness (e.g. ASR reliably mangling a Tamil surname) die when that weakness is fixed. That is **case rot**, not a regression, and the two look identical in a diff.
+
+### D10 — `find_appointments` added to the registry (2026-08-16)
+
+**A missing tool, found by eval authors rather than by design review.** `RescheduleIn` and `CancelIn` both require an `appointment_id`; nothing in the registry produced one. The agent was being asked to change a booking it had no way to locate. Two independent case authors inferred the tool must exist and wrote against a guessed name.
+
+Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` — reading a patient's bookings is reading their health data, and without the gate the tool becomes a way to enumerate whether an arbitrary number has appointments here.
+
+### Production bug found by `badinput-008`
+
+`Msisdn` was `^\+?[1-9]\d{7,14}$` — 8 to 15 digits. An Indian mobile is exactly 10, so a **9-digit number passed**: a real number with one digit dropped by ASR, which is the most likely transcription failure on a noisy line. It would have validated cleanly, been written to the patient record, and sent the confirmation SMS to nobody. Now `^(?:\+?91)?[6-9]\d{9}$`.
+
+### Still open before a baseline
+
+- Scoring cannot express "forbid an INTENT", only a tool. Unanticipated routes rest entirely on violation detection.
+- Several cases require a judge that inspects agent **utterances**, not just tool calls. `ambiguous-009` is the clearest: an agent can leak a third party's appointment aloud while every tool call it made was legitimate. Tool-call auditing cannot see that failure at all.
+- Fixture validity: `edge-006` needs audio pre-measured to actually produce diverging ASR decodes; TTS-plus-noise usually decodes too well to test anything.
+
+## 5a. Evaluation (G5) — remaining
 ## 6. Validators (G6) — not started
 ## 7. Operations (G7) — not started
 ## 8. Rollout stage (G8)

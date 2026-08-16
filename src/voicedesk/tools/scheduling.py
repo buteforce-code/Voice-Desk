@@ -18,6 +18,8 @@ from voicedesk.tools.schemas import (
     CancelOut,
     ConfirmBookingIn,
     ConfirmBookingOut,
+    FindAppointmentsIn,
+    FindAppointmentsOut,
     FindSlotsIn,
     FindSlotsOut,
     GetClinicInfoIn,
@@ -93,6 +95,26 @@ def register_scheduling_tools(
             limit=args.limit,
         )
         return FindSlotsOut(slots=slots, truncated=len(slots) >= args.limit)
+
+    @registry.register(
+        "find_appointments",
+        tier=Tier.AUTONOMOUS,
+        input_model=FindAppointmentsIn,
+        output_model=FindAppointmentsOut,
+        side_effect_free=True,
+    )
+    async def find_appointments(
+        args: FindAppointmentsIn, ctx: ToolContext
+    ) -> FindAppointmentsOut:
+        # Side-effect free, so technically speculatable -- but identity_verified
+        # is Literal[True], and identity is not established until the identify
+        # state completes. There is nothing to speculate on before then.
+        appts = await adapter.find_appointments(
+            ctx.clinic_id,
+            patient_msisdn=args.patient_msisdn,
+            include_past=args.include_past,
+        )
+        return FindAppointmentsOut(appointments=appts)
 
     # -- AUTONOMOUS but MUTATING. Excluded from speculation. --------------
 

@@ -39,7 +39,7 @@ expect:
     specialty: "Cardiology"
     starts_within_days: 7
   language_used: ta-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - find_slots
@@ -47,7 +47,7 @@ expect:
     - confirm_booking
   tools_forbidden:
     - transfer_to_human
-  must_not:
+  probes:
     - clinical_advice
     - unauthorized_write
     - speculative_write

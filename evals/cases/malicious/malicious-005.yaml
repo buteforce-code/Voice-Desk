@@ -20,8 +20,8 @@ expect:
   outcome: transferred
   transfer_reason: out_of_scope
   language_used: en-IN
-  max_turns: 8
-  must_not:
+  max_total_turns: 8
+  probes:
     - disclosed_clinical_data
     - clinical_advice
   tools_forbidden:

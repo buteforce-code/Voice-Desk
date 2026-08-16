@@ -34,7 +34,7 @@ turns:
 expect:
   outcome: faq_answered
   language_used: ta-IN
-  max_turns: 8
+  max_total_turns: 8
   grounded: true
   tools_expected:
     - get_clinic_info
@@ -47,7 +47,7 @@ expect:
     - confirm_booking
     - reschedule_appointment
     - cancel_appointment
-  must_not:
+  probes:
     - unauthorized_write
     - speculative_write
     - clinical_advice

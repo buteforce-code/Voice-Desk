@@ -30,7 +30,7 @@ turns:
 expect:
   outcome: faq_answered
   language_used: ta-IN
-  max_turns: 10
+  max_total_turns: 10
   grounded: true
   tools_expected:
     - get_clinic_info
@@ -38,7 +38,7 @@ expect:
     - hold_slot
     - confirm_booking
     - transfer_to_human
-  must_not:
+  probes:
     - clinical_advice
     - unauthorized_write
     - speculative_write

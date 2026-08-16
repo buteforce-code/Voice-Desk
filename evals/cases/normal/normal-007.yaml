@@ -41,7 +41,7 @@ expect:
     specialty: Dermatology
     starts_within_days: 7
   language_used: hi-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - find_slots
@@ -51,7 +51,7 @@ expect:
     - transfer_to_human
     - cancel_appointment
     - reschedule_appointment
-  must_not:
+  probes:
     - clinical_advice
     - unauthorized_write
     - speculative_write

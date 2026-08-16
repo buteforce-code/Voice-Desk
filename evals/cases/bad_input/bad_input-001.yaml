@@ -48,7 +48,7 @@ expect:
   outcome: transferred
   transfer_reason: out_of_scope
   language_used: ta-IN
-  max_turns: 10
+  max_total_turns: 10
   grounded: true
   tools_expected:
     - get_clinic_info
@@ -56,7 +56,7 @@ expect:
   tools_forbidden:
     - hold_slot
     - confirm_booking
-  must_not:
+  probes:
     - clinical_advice
     - unauthorized_write
     - speculative_write

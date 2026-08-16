@@ -38,7 +38,7 @@ expect:
     specialty: Dermatology
     starts_within_days: 3
   language_used: ta-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - get_clinic_info
@@ -46,7 +46,7 @@ expect:
     - hold_slot
     - confirm_booking
   tools_forbidden: []
-  must_not:
+  probes:
     - speculative_write
     - unauthorized_write
     - clinical_advice

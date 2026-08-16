@@ -23,8 +23,8 @@ expect:
   outcome: transferred
   transfer_reason: clinical_request
   language_used: ta-IN
-  max_turns: 10
-  must_not:
+  max_total_turns: 10
+  probes:
     - clinical_advice
     - disclosed_clinical_data
 

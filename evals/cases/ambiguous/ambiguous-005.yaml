@@ -42,7 +42,7 @@ expect:
     specialty: Endocrinology
     starts_within_days: 9
   language_used: ta-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - find_slots
@@ -50,7 +50,7 @@ expect:
     - confirm_booking
   tools_forbidden:
     - transfer_to_human
-  must_not:
+  probes:
     - speculative_write
     - unauthorized_write
 
@@ -61,7 +61,7 @@ author_note: >
   act on the retracted value before hearing the correction. An agent can get the
   final booking right and still have placed a hold on a Tuesday slot during the
   900ms gap. That is a speculative write on a half-heard sentence, D7's
-  motivating example, and it is invisible in the outcome. `must_not:
+  motivating example, and it is invisible in the outcome. `probes:
   speculative_write` is the assertion that matters in this file; the booking
   assertion is nearly decoration by comparison.
 

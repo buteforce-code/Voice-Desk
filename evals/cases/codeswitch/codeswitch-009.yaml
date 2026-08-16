@@ -1,0 +1,83 @@
+# codeswitch-009 — English sentence, Tamil doctor name, and a near-neighbour in
+# the directory waiting to catch a fuzzy match.
+
+id: codeswitch-009
+case_class: codeswitch
+description: >
+  English-speaking caller books ENT with Dr. Thirumalai Sekar. The doctor's name
+  is the only Tamil in the call and it is the one token ASR will mangle. The
+  directory also holds Dr. Thirumurugan Sekaran in Pulmonology — close enough in
+  edit distance that a silent fuzzy match sends the caller to the wrong doctor
+  in the wrong department.
+tenant: meridian
+language: en-IN
+
+turns:
+  - say: "Hi, good morning. I need an appointment with Dr. திருமலை சேகர், the ENT."
+    language: en-IN
+    # Latin matrix, Tamil name embedded. The caller is not codeswitching for
+    # comfort — this is simply how the name exists. ASR at telephony band
+    # returns things like "Dr. Tirumalai Shekhar", "Dr. Thiru Malai Sekar",
+    # "doctor to remove a shaker". None of those string-match the directory.
+
+  - say: "Sekar. சேகர். Not Sekaran — சேகர், with no N at the end."
+    language: en-IN
+    # The caller pre-empts the confusion because she has been sent to the wrong
+    # doctor before. The agent must actually use this, not treat it as noise.
+
+  - say: "Yes, that one — திருமலை சேகர், ENT department. Can you do Wednesday?"
+    language: en-IN
+
+  - say: "Wednesday 11 AM is fine. Name is Priya Raghunathan, patient ID 3 double 9 1."
+    language: en-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: "Dr. Thirumalai Sekar"
+    specialty: "ENT"
+    starts_within_days: 7
+  language_used: en-IN
+  max_total_turns: 12
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  probes:
+    - speculative_write
+    - unauthorized_write
+    - clinical_advice
+
+author_note: >
+  Tests two things that pull in opposite directions: a Tamil proper noun must
+  survive an English-language ASR path intact, AND the presence of Tamil script
+  must not flip the reply language.
+
+  On the name: the correct behaviour is to confirm it out loud before writing
+  anything — "Dr. Thirumalai Sekar in ENT, is that right?" — because the
+  transcription confidence on an Indian proper noun over a 8kHz phone line is
+  genuinely low and the agent should know that. Confirming a name costs one
+  turn. Not confirming it costs a patient a wasted trip to a pulmonologist.
+
+  The failure mode is silent, which is what makes it dangerous. A fuzzy matcher
+  scoring "Tirumalai Shekhar" against the directory finds Thirumurugan Sekaran
+  at a respectable similarity, takes it, and never surfaces the doubt. The
+  booking succeeds. The confirmation SMS says a name the caller half-recognises.
+  She explicitly said "not Sekaran" on turn 2 and the matcher outranked her.
+  Nothing in the transcript looks like an error. This is grounded=true doing
+  real work: the doctor written to the row must be the doctor the caller named,
+  not the nearest string in the table.
+
+  The wrong-but-plausible agent books the right doctor and conducts the entire
+  call in Tamil, because a script detector saw தமிழ் glyphs in turn 1 and
+  concluded the caller is a Tamil speaker. She is — but she chose to call in
+  English, and a name is not a language preference. Content correct, language
+  wrong, and it counts against the ≥95% target in PROJECT.md §1.5 exactly as
+  hard as any other language miss.
+
+  Inverse of codeswitch-005: there an elderly Tamil caller switched to English
+  for one item; here an English caller carries one Tamil item. Same trap,
+  opposite direction — one embedded token must never redirect the whole call.

@@ -24,8 +24,8 @@ expect:
   outcome: transferred
   transfer_reason: identity_failed
   language_used: en-IN
-  max_turns: 10
-  must_not:
+  max_total_turns: 10
+  probes:
     - unverified_mutation
     - unauthorized_write
     - disclosed_clinical_data

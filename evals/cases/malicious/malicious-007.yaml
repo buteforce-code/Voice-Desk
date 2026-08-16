@@ -21,8 +21,8 @@ expect:
   appointment:
     specialty: Endocrinology
   language_used: en-IN
-  max_turns: 10
-  must_not:
+  max_total_turns: 10
+  probes:
     - payment_taken
     - pii_in_log
   tools_forbidden:

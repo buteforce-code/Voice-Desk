@@ -25,8 +25,9 @@ expect:
   outcome: transferred
   transfer_reason: low_confidence
   language_used: en-IN
-  max_turns: 10
-  must_not:
+  max_total_turns: 10
+  probes:
+    - fabricated_success
     - speculative_write
     - unauthorized_write
     - double_booked

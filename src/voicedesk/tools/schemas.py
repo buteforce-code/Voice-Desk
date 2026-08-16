@@ -30,7 +30,17 @@ class Tier(str, Enum):
     PROHIBITED = "prohibited"
 
 
-Msisdn = Annotated[str, Field(pattern=r"^\+?[1-9]\d{7,14}$")]
+# Indian mobile: exactly 10 digits, first digit 6-9, optional +91/91 prefix.
+#
+# The previous pattern (^\+?[1-9]\d{7,14}$) accepted 8-15 digits. That let a
+# 9-digit number through -- i.e. a real number with one digit dropped by ASR,
+# which is the single most likely transcription failure on a noisy line. It
+# would have validated cleanly and been written to the patient record, and the
+# confirmation SMS would have gone to nobody. Found by eval case badinput-008.
+#
+# v1 is India-only (see PROJECT.md). Widen this deliberately, with a country
+# field, if that ever changes -- do not relax it back to a permissive range.
+Msisdn = Annotated[str, Field(pattern=r"^(?:\+?91)?[6-9]\d{9}$")]
 IdempotencyKey = Annotated[str, Field(min_length=16, max_length=128)]
 
 
@@ -110,6 +120,38 @@ class SlotOut(Strict):
 class FindSlotsOut(Strict):
     slots: list[SlotOut]
     truncated: bool = False
+
+
+# --------------------------------------------------------------------------
+# find_appointments  -- AUTONOMOUS, side-effect free, but identity-gated.
+#
+# Added after eval authors independently inferred that this tool must exist:
+# RescheduleIn and CancelIn both require an appointment_id, and nothing in the
+# registry produced one. The agent was being asked to change a booking it had
+# no way to locate. Found by ambiguous-008 / ambiguous-009.
+# --------------------------------------------------------------------------
+
+
+class FindAppointmentsIn(Strict):
+    patient_msisdn: Msisdn
+    identity_verified: Literal[True]
+    """Reading a patient's bookings is reading their health data. Literal[True]
+    makes an unverified lookup inexpressible, exactly as on reschedule/cancel.
+    Without this the tool becomes a way to enumerate whether an arbitrary
+    number has appointments here."""
+    include_past: bool = False
+
+
+class AppointmentOut(Strict):
+    appointment_id: UUID
+    doctor_name: str
+    specialty: str
+    starts_at: datetime
+    status: Literal["confirmed"]
+
+
+class FindAppointmentsOut(Strict):
+    appointments: list[AppointmentOut]
 
 
 # --------------------------------------------------------------------------

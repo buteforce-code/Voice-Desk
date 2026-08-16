@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from voicedesk.tools.schemas import SlotOut
+from voicedesk.tools.schemas import AppointmentOut, SlotOut
 
 
 class SchedulingError(Exception):
@@ -53,6 +53,17 @@ class SchedulingAdapter(Protocol):
         latest: datetime | None,
         limit: int,
     ) -> list[SlotOut]: ...
+
+    async def find_appointments(
+        self, clinic_id: UUID, *, patient_msisdn: str, include_past: bool
+    ) -> list[AppointmentOut]:
+        """Confirmed bookings for one verified patient.
+
+        Identity verification is enforced at the tool boundary, not here --
+        but this method must still scope strictly to the given msisdn within
+        the given clinic. It must never be reachable as an enumeration.
+        """
+        ...
 
     async def hold_slot(
         self, clinic_id: UUID, slot_id: UUID, call_id: UUID, ttl_seconds: int

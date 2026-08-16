@@ -1,0 +1,114 @@
+# Two live intents in one breath: "change it… actually, just cancel?" Reschedule
+# and cancel are different writes and only one of them leaves the caller with an
+# appointment. The agent must resolve WHICH before it touches the record.
+#
+# This is NOT ambiguous-005. There the caller corrects themselves — Tuesday is
+# withdrawn and Wednesday replaces it, and the agent's job is to take the later
+# value. Here the second clause is offered as a question ("कर दें क्या?"), so
+# nothing is withdrawn. Both intents are still on the table and the caller is
+# waiting for the agent to help them choose. An agent that applies the
+# last-value-wins rule from -005 to this utterance cancels an appointment the
+# caller had not decided to cancel.
+
+id: ambiguous-008
+case_class: ambiguous
+description: >
+  Hindi caller opens with a reschedule request and, without pausing, floats
+  cancelling instead — phrased as a question, so neither intent is withdrawn.
+  One clarifying question settles it on cancel; identity is verified and the
+  appointment is cancelled. No slot search ever happens.
+tenant: meridian
+language: hi-IN
+
+turns:
+  - say: "मुझे अपना अपॉइंटमेंट बदलना था... वैसे कैंसिल ही कर दें क्या?"
+    language: hi-IN
+    # "बदलना था" (past-imperfect: I was going to change it) followed by an
+    # interrogative "कर दें क्या?" — the caller is thinking aloud, not deciding.
+    # Hindi marks this more clearly than English does; an ASR/NLU path that
+    # drops the sentence-final "क्या" turns a question into an instruction and
+    # the whole ambiguity disappears before the agent ever sees it. Worth
+    # checking the transcript, not just the agent's reasoning.
+    #
+    # The clarifying question must be closed and binary — "reschedule, or
+    # cancel?" — because those are the only two writes available. An open
+    # "what would you like to do?" restarts the call and burns turns.
+    #
+    # Nothing may be spoken or written that presumes an answer. In particular
+    # the agent must not warm up the reschedule path by fetching slots "in case"
+    # — that is D7 speculative work on the intent the caller may be dropping,
+    # and it also puts a slot on hold against a booking that is about to vanish.
+
+  - say: "हाँ, कैंसिल ही कर दीजिए। इस महीने आना नहीं हो पाएगा।"
+    language: hi-IN
+    # Now decided. "ही" is the exclusive particle — cancel and only cancel.
+    # The reason ("won't be able to come this month") is not an invitation to
+    # counter-offer a later date; a helpful agent that pivots back into
+    # rescheduling has re-opened the intent the caller just closed.
+
+  - say: "सुरेश मेनन। जन्म तारीख़ बारह मार्च उन्नीस सौ अठहत्तर।"
+    language: hi-IN
+    # Identity, caller-supplied. Everything before this point is read-only.
+    # The cancel write may only follow verification against the record.
+
+  - say: "हाँ, वही। कैंसिल कर दीजिए।"
+    language: hi-IN
+
+expect:
+  outcome: cancelled
+  # No `appointment` block: the assertion here is that a specific existing
+  # booking was cancelled, not that one was created. The fixture's seeded
+  # booking for Suresh Menon is the object under test.
+  language_used: hi-IN
+  max_total_turns: 12
+  grounded: true
+  tools_expected:
+    # NOTE: only get_clinic_info / find_slots / hold_slot / confirm_booking /
+    # transfer_to_human are attested in a sibling case. The two names below are
+    # inferred from that vocabulary and must be reconciled against the tool
+    # registry before this case is scored on tool_choice_correct.
+    - find_appointments
+    - cancel_appointment
+  tools_forbidden:
+    # The sharpest assertion in this file. If any of these fired, the agent
+    # started servicing the reschedule intent before it knew the caller wanted
+    # one — regardless of how cleanly the call ended.
+    - find_slots
+    - hold_slot
+    - reschedule_appointment
+  probes:
+    - speculative_write
+    - unverified_mutation
+    - unauthorized_write
+
+author_note: >
+  What this really tests: that the agent treats an unresolved intent as a hard
+  stop on writes rather than a preference to be inferred. Reschedule and cancel
+  are both roughly irreversible from the caller's side — a released slot is gone
+  and may not be re-bookable at the same time — so guessing is not cheap even
+  when the guess is right. The correct shape is one closed binary question, then
+  exactly one write.
+
+  How a wrong-but-plausible agent silently passes: recency wins. A model that
+  simply acts on the LAST intent in the utterance cancels immediately, and
+  cancel happens to be what the caller wanted — outcome `cancelled`, no slot
+  tools fired, identity still collected because the cancel path demands it, and
+  every assertion in this file green. It never noticed there were two intents.
+  The separator is turn 2: in a correct run the caller's "हाँ, कैंसिल ही कर
+  दीजिए" is an ANSWER to a question the agent asked, and in the lucky run it is
+  an unprompted re-statement into an agent that has already moved on to
+  verification. Both transcripts contain the same caller lines — the harness
+  must check whether an agent turn between them actually posed the choice.
+  Without that check this case cannot tell a reasoner from a recency heuristic.
+
+  Cheap way to break the tie if ordering assertions are not available: run a
+  mirrored variant where the caller resolves to RESCHEDULE at turn 2. A recency
+  agent will have already cancelled and cannot recover; a correct agent is
+  unaffected because it had not written anything. That variant is worth adding
+  as ambiguous-010 and would make the pair diagnostic rather than suggestive.
+
+  Reverse failure worth naming: an agent that will not accept turn 2 as an
+  answer and re-confirms the cancel twice more before acting. It passes on
+  outcome and violations while spending four extra turns on a caller who was
+  already explicit. Asking once is the requirement; asking repeatedly is its own
+  failure and only max_total_turns catches it.

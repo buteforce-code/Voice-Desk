@@ -1,0 +1,89 @@
+# codeswitch-007 — One request, said three times, in three languages.
+# Elderly caller. Slow, heavily mixed, restates herself because she is not sure
+# she was understood. The agent must hear ONE intent, not three.
+
+id: codeswitch-007
+case_class: codeswitch
+description: >
+  Elderly Tamil-dominant caller books a cardiology slot. She states the request
+  in Tamil, doubts she was understood, restates it in Hindi, doubts again, and
+  restates it a third time in English — all before the agent has offered a slot.
+  Three utterances, one appointment.
+tenant: meridian
+language: ta-IN
+
+turns:
+  - say: "வணக்கம்மா. எனக்கு ஒரு appointment வேணும், Dr. Anitha Sundaresan-கிட்ட."
+    language: ta-IN
+    silence_after_ms: 1900
+    # She is old and slow. This pause is her breathing, not her finishing. If
+    # Smart Turn ends the turn here the agent starts talking over her next
+    # sentence, and every interruption at this age is a hang-up.
+
+  - say: "मतलब... डॉक्टर से मिलना है ना. Appointment चाहिए, समझे?"
+    language: hi-IN
+    silence_after_ms: 2100
+    # Restatement #1. Devanagari matrix, English "appointment". She has switched
+    # language because she suspects the machine did not follow her Tamil — this
+    # is a repair, not a new request and not a preference change.
+
+  - say: "I am telling — I want to see the doctor only. அதேதான் மா, same appointment."
+    language: en-IN
+    silence_after_ms: 1600
+    # Restatement #2. Latin matrix with a Tamil tail. Three surface forms, one
+    # intent. An agent that counts intents rather than resolving them now has
+    # three pending bookings.
+
+  - say: "Next week ஏதாவது இருக்கா? Tuesday-னா நல்லா இருக்கும், morning."
+    language: ta-IN
+    # She settles back into Tamil once she is satisfied she was heard. Tamil is
+    # the dominant language of this call; the Hindi and English turns were
+    # repair attempts.
+
+  - say: "சரி மா, Tuesday morning-க்கே book பண்ணுங்க. பேரு Revathi Balasubramanian."
+    language: ta-IN
+
+expect:
+  outcome: booked
+  appointment:
+    doctor_name: "Dr. Anitha Sundaresan"
+    specialty: "Cardiology"
+    starts_within_days: 10
+  language_used: ta-IN
+  max_total_turns: 14
+  grounded: true
+  tools_expected:
+    - find_slots
+    - hold_slot
+    - confirm_booking
+  tools_forbidden:
+    - transfer_to_human
+  probes:
+    - clinical_advice
+    - double_booked
+    - speculative_write
+    - unauthorized_write
+
+author_note: >
+  Tests intent de-duplication across a language switch. The same request arrives
+  three times in three scripts; exactly one appointment may exist at the end and
+  the agent must not ask her to start over.
+
+  The wrong-but-plausible agent resolves it correctly and answers in English,
+  because her last full restatement was English and a most-recent-turn language
+  ID latches onto it. Tamil is her language — the English sentence was her
+  apologising to a machine she thought was failing her. Answering in English
+  confirms the failure she suspected and is a miss against the ≥95% language
+  target in PROJECT.md §1.5.
+
+  The worse failure is structural: treating restatements #1 and #2 as new
+  intents. That agent either books twice (double_booked), or holds a slot on
+  turn one and holds a second on turn two before any of it is confirmed
+  (speculative_write), or — most commonly — asks "so that is three appointments?"
+  and loses her.
+
+  The third failure is the quiet one this whole slice exists for: cutting her off
+  at the 1.9s and 2.1s pauses. She pauses because she is elderly, and she pauses
+  hardest at exactly the moment she is changing language. An agent that treats
+  those as end-of-turn interrupts her three times in ninety seconds. She hangs up
+  and the clinic never learns why.

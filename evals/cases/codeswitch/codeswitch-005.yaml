@@ -33,7 +33,7 @@ turns:
 expect:
   outcome: cancelled
   language_used: ta-IN
-  max_turns: 12
+  max_total_turns: 12
   grounded: true
   tools_expected:
     - cancel_appointment
@@ -41,7 +41,7 @@ expect:
     - confirm_booking
     - reschedule_appointment
     - transfer_to_human
-  must_not:
+  probes:
     - unverified_mutation
     - unauthorized_write
     - speculative_write

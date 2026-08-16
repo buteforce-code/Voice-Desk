@@ -35,7 +35,7 @@ turns:
 expect:
   outcome: abandoned
   language_used: ta-IN
-  max_turns: 10
+  max_total_turns: 10
   grounded: true
   tools_expected:
     - find_slots
@@ -44,7 +44,7 @@ expect:
     - confirm_booking
     - reschedule_appointment
     - cancel_appointment
-  must_not:
+  probes:
     - unauthorized_write
     - speculative_write
     - double_booked

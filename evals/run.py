@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -30,6 +31,22 @@ from pydantic import ValidationError
 from evals.schema import CaseClass, EvalCase, Violation
 
 CASES_DIR = Path(__file__).parent / "cases"
+SCHEDULING_SRC = Path(__file__).parent.parent / "src" / "voicedesk" / "tools" / "scheduling.py"
+
+
+def registered_tools() -> set[str]:
+    """Parse the live tool names out of the registry source.
+
+    Read from source rather than imported so --validate stays runnable without
+    pipecat, asyncpg and the rest of the runtime installed. If the parse ever
+    returns nothing, that is a hard failure -- silently validating against an
+    empty set would defeat the whole check.
+    """
+    src = SCHEDULING_SRC.read_text(encoding="utf-8")
+    names = set(re.findall(r'registry\.register\(\s*\n?\s*"([a-z_]+)"', src))
+    if not names:
+        raise RuntimeError(f"parsed no tool names from {SCHEDULING_SRC}")
+    return names
 
 
 def load_cases() -> tuple[list[EvalCase], list[str]]:
@@ -82,6 +99,33 @@ def check_invariants(cases: list[EvalCase]) -> list[str]:
             problems.append(f"duplicate case id '{c.id}'")
         seen[c.id] = c.description
 
+    # Tool names are free strings in the schema, so a typo or an invented tool
+    # would otherwise score as a silent non-result forever. Six such references
+    # shipped in the first batch before this check existed.
+    tools = registered_tools()
+    for c in cases:
+        for field in ("tools_expected", "tools_forbidden"):
+            for name in getattr(c.expect, field):
+                if name not in tools:
+                    problems.append(
+                        f"{c.id}: {field} references unknown tool '{name}' "
+                        f"(registered: {', '.join(sorted(tools))})"
+                    )
+
+    # A transfer outcome without a reason cannot be scored against the
+    # uncertainty triggers in docs/STATE_MACHINE.md.
+    for c in cases:
+        if c.expect.outcome.value == "transferred" and c.expect.transfer_reason is None:
+            problems.append(f"{c.id}: outcome 'transferred' with no transfer_reason")
+
+    # An effort floor above the ceiling is unsatisfiable.
+    for c in cases:
+        if c.expect.min_agent_turns > c.expect.max_total_turns:
+            problems.append(
+                f"{c.id}: min_agent_turns {c.expect.min_agent_turns} exceeds "
+                f"max_total_turns {c.expect.max_total_turns}"
+            )
+
     by_class: dict[CaseClass, list[EvalCase]] = defaultdict(list)
     for c in cases:
         by_class[c.case_class].append(c)
@@ -92,12 +136,19 @@ def check_invariants(cases: list[EvalCase]) -> list[str]:
         if not by_class.get(cls):
             problems.append(f"no cases in class '{cls.value}' — coverage hole")
 
-    # A malicious case that asserts nothing is decoration.
+    # A malicious case that names no target is decoration.
     for c in by_class.get(CaseClass.MALICIOUS, []):
-        if not c.expect.must_not:
-            problems.append(
-                f"{c.id}: malicious case asserts no violations in must_not"
-            )
+        if not c.expect.probes:
+            problems.append(f"{c.id}: malicious case probes no violations")
+
+    # Every violation must be probed somewhere. An unprobed violation means a
+    # detector nothing exercises -- which is how a broken detector reports a
+    # clean suite. This is what `probes` is FOR, now that it is honest
+    # metadata rather than a fake assertion.
+    probed = {v for c in cases for v in c.expect.probes}
+    for v in Violation:
+        if v not in probed:
+            problems.append(f"no case probes violation '{v.value}' — detector untested")
 
     # A code-switch case that never switches language is mislabelled.
     for c in by_class.get(CaseClass.CODESWITCH, []):
