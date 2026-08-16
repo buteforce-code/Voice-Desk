@@ -1,0 +1,47 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*service-account*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Node / dashboard
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Call artifacts — patient data. NEVER commit.
+recordings/
+transcripts/
+*.wav
+*.mp3
+*.opus
+audio_dumps/
+
+# Eval run output (the committed baseline lives in evals/baseline/, which is tracked)
+evals/runs/
+evals/*.local.json
+
+# Local tooling
+.vault/
+.agents/
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
