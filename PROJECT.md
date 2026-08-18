@@ -1,7 +1,8 @@
 # Voice Desk — Project Definition
 
 > Built and judged against `.agents/rules/agent_build_standard.md`, gated by `.agents/workflows/new_project_lifecycle.md`.
-> **Current gate: G4 passed. G5 next — the gate that decides whether the rest was real.**
+> **Current gate: G5 — cases complete and conformant, baseline blocked on the pipeline.**
+> **G6 started early, out of order, and deliberately: see D11.**
 > **Rollout stage: pre-offline-eval.** Nothing is deployed. Nothing may call a real patient.
 
 **No clinic is engaged.** This is a portfolio build. Sitapati Clinic and Hospital (Royapettah, Chennai) is a *target prospect profile* used to keep requirements honest — no contact has been made and no relationship exists. See D5.
@@ -156,7 +157,7 @@ Prompts may now be written. Not before.
 
 | Requirement | Artifact |
 |---|---|
-| One function per action, strict schema in and out | `tools/schemas.py` — Pydantic `extra="forbid"`, `frozen=True`. Six tools, no `run_query`/`execute` escape hatch |
+| One function per action, strict schema in and out | `tools/schemas.py` — Pydantic `extra="forbid"`, `frozen=True`. Eight tools, no `run_query`/`execute` escape hatch |
 | Server-side authorization on every tool | `tools/registry.py::_authorize` — `ToolContext` is built by the session; the model cannot assert its own `clinic_id`, `state` or `approval_token` |
 | Least privilege credentials | `voicedesk_agent` role, `db/migrations/0001_init.sql` |
 | Rate limits | 25 tool calls per call, 8 per tool per call |
@@ -165,7 +166,7 @@ Prompts may now be written. Not before.
 | Sandbox / dry-run | `ToolContext.dry_run`, default `true` |
 | Untrusted content bounded, stripped, fenced as data | `security/fencing.py` — containment not detection, per-call nonce envelope |
 
-Adapter seam: `adapters/base.SchedulingAdapter` Protocol. `HmisAdapter` is **deliberately unimplemented** — no clinic is engaged, so an adapter written against a guessed API shape would be fiction.
+Adapter seam: `adapters/base.SchedulingAdapter` Protocol. `PostgresAdapter` (`adapters/postgres.py`) is the designated-SoT implementation, added 2026-08-17 — until it existed, every tool called a method on a bare Protocol and nothing could execute. `HmisAdapter` remains **deliberately unimplemented** — no clinic is engaged, so an adapter written against a guessed API shape would be fiction.
 
 ### D7 — Speculative execution is tiered (2026-08-16)
 
@@ -219,7 +220,21 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
 - Fixture validity: `edge-006` needs audio pre-measured to actually produce diverging ASR decodes; TTS-plus-noise usually decodes too well to test anything.
 
 ## 5a. Evaluation (G5) — remaining
-## 6. Validators (G6) — not started
+
+The baseline needs a running pipeline, which needed a working adapter, which needed tenant
+isolation to actually exist. That chain is the subject of D11.
+
+## 6. Validators (G6) — 2 of 10 modules, both blocking in CI
+
+| Module | State |
+|---|---|
+| `test_prohibited.py` | ✅ 82 tests. C12–C17 unreachable, approval boundary, speculation tiering, redaction, no real clinic name in the repo |
+| `test_tenant_isolation.py` | ✅ 37 tests. Policy shape, fail-closed tenant function, adapter self-scoping, RLS-bypass refusal |
+| `test_slot_validity.py` · `test_double_booking.py` · `test_identity.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
+
+Both existing modules run on a bare checkout — no database, no model, no telephony account. That
+is what lets them be gates rather than something skipped when the environment is inconvenient.
+
 ## 7. Operations (G7) — not started
 ## 8. Rollout stage (G8)
 
@@ -228,7 +243,7 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
    →  draft-only  →  approval-gated execution  →  limited autonomous low-risk
 ```
 
-Current stage: **pre-offline-eval.** Evidence required to promote: a populated `evals/` set with a committed baseline.
+Current stage: **pre-offline-eval.** Evidence required to promote: a populated `evals/` set with a committed baseline. Cases are populated and conformant; the baseline is the one missing artifact.
 
 ---
 
@@ -283,8 +298,56 @@ Not a scope cut — the compliance wedge. See §2.3.
 
 Chennai has a large Hindi-speaking population. Code-switch within a single utterance is the norm, not the edge case, and is a first-class eval slice.
 
+### D11 — G6 started before G5 finished, because G5 could not run (2026-08-17)
+
+A review of the repo against its own claims found that **row-level security was enabled on all ten
+tables with zero policies defined.** Postgres default-denies in that state and `voicedesk_agent` is
+not the table owner, so every statement the agent issued returned nothing. The grants in
+`0001_init.sql` were dead code, and the comment promising "cross-tenant reads return empty, not
+another clinic" was true only because *all* reads returned empty.
+
+That is not a G6 validator problem, it is a G3 schema defect — but it surfaced as the reason the
+G5 baseline could not be produced. The dependency chain runs backwards through the gate order:
+
+```
+G5 baseline  ->  needs a pipeline
+             ->  needs an adapter that can execute      (G4, contracts only)
+             ->  needs tenant isolation that works      (G3, enabled but empty)
+             ->  needs a test that would have caught it (G6, not started)
+```
+
+Fixed in `0002_rls_policies.sql`, with `tests/test_tenant_isolation.py` written first so the defect
+cannot return silently. Writing the two test modules found four more defects that no amount of
+reading would have:
+
+- **A 16-digit card number was redacted as an Aadhaar number, leaving its last four digits in the
+  transcript.** Aadhaar is 12 digits in 4-4-4 and ran first, so it consumed the card's first twelve.
+  Partial card data persisted, and the audit row misnamed what the caller said. Longest pattern
+  first now (`security/fencing.py`).
+- **Authorization ran after schema validation**, so an unauthorized write with malformed arguments
+  was audited as `invalid_arguments`. The audit log exists to show attempted unauthorized writes;
+  that ordering lost exactly that signal. `_authorize` reads only `ctx` and `spec`, so it now runs
+  first (`tools/registry.py`).
+- **Three grants the code depends on were missing**: no SELECT on `agent_actions` (idempotency
+  replay cannot read), no INSERT on `patients` (a first-time caller cannot be recorded, and
+  `appointments.patient_id` is NOT NULL), no sequence USAGE (every append-only insert fails).
+  Each would have failed at runtime, not at deploy.
+- **`CancelOut.cancelled_at` had no column to come from**, and `cancel_reason` had no update grant.
+
+The CI job asserting the prohibited row had also been failing since G4: its grep matched
+`_PROHIBITED_BY_ABSENCE`, the frozenset that lists the forbidden call names so they can be checked
+for. A guard that fires on its own guard list is a guard someone disables. It now matches call
+sites only, and `continue-on-error` is off every step that guards a real control.
+
+**The lesson is the one G5 already taught in D9, arriving from the other side.** D9 found ten
+defects by writing eval cases before committing a baseline. This found six by writing validators
+before running an eval. In both cases the artifact that catches defects is the one that has to
+exist *first*, and in both cases the gate marked ✅ was marked so on its design document rather
+than on anything executable.
+
 ---
 
 ## Log
 
 - **2026-08-16** — G0 scaffold. G1 and G2 written. D1–D4 recorded.
+- **2026-08-17** — Repo audited against its own claims. RLS policies written (`0002`), `PostgresAdapter` built, first two G6 validator modules landed (119 tests, blocking in CI). Six defects found and fixed; D11 records them. Docs resynced: eight tools, not six.

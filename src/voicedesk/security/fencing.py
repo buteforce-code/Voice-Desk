@@ -43,9 +43,22 @@ _AADHAAR = re.compile(r"\b\d{4}[ -]?\d{4}[ -]?\d{4}\b")
 
 
 def redact(text: str) -> str:
-    """Applied before persistence and before prompting. Never reversible."""
-    text = _AADHAAR.sub("<id-redacted>", text)
+    """Applied before persistence and before prompting. Never reversible.
+
+    **Order matters, and getting it wrong leaks.** Aadhaar is 12 digits in
+    4-4-4; a 16-digit card spoken as four groups of four contains a matching
+    12-digit prefix. Running Aadhaar first therefore consumed the first twelve
+    digits of a card number and left the last four sitting in the transcript,
+    labelled as an ID redaction. Both halves of that are wrong: partial card
+    data was persisted, and the audit trail misnamed what the caller said.
+
+    Longest pattern first fixes it. A 12-digit Aadhaar can never match the card
+    pattern, which needs 13 or more, so the reverse ordering has no equivalent
+    failure. A digit run of 13-19 is labelled a card even if it was something
+    else — over-redacting an unknown number is the safe direction.
+    """
     text = _CARD.sub("<card-redacted>", text)
+    text = _AADHAAR.sub("<id-redacted>", text)
     return text
 
 

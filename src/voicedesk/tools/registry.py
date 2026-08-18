@@ -161,8 +161,15 @@ class ToolRegistry:
         try:
             self._check_rate_limit(ctx, spec)
             self._check_speculation(ctx, spec)
-            args = self._validate(spec, raw_args)
+            # Authorize BEFORE validating. `_authorize` reads only ctx and spec,
+            # never the arguments, so the order is free — and this way an
+            # unauthorized attempt is audited as 'not_authorized' rather than as
+            # whatever its malformed arguments happened to trip first. The audit
+            # log exists to show attempted unauthorized writes; a row reading
+            # "schema validation failed" loses exactly that signal. It also
+            # denies an unauthorized caller a validation-error oracle.
             authorized_by = self._authorize(ctx, spec)
+            args = self._validate(spec, raw_args)
         except ToolError as exc:
             await self._audit.record(
                 ctx, name, _redact(raw_args), "rejected",

@@ -1,4 +1,4 @@
-"""The six tools. One function per action — no general-purpose escape hatch.
+"""The eight tools. One function per action — no general-purpose escape hatch.
 
 Prefer `confirm_booking(slot_id, msisdn, name)` over "access to the scheduler".
 There is deliberately no `run_query`, no `call_hmis`, no `execute`.
@@ -9,7 +9,6 @@ Tiers come from the PROJECT.md risk register and are enforced in registry.py.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
 
 from voicedesk.adapters.base import SchedulingAdapter
 from voicedesk.tools.registry import ToolRegistry

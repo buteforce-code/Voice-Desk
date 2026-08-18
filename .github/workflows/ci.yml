@@ -2,6 +2,12 @@ name: CI
 
 # G5: the eval suite runs on every model, prompt, tool or retrieval change.
 # If the suite is not in CI, it does not exist.
+#
+# `continue-on-error` was on every step of this file while the code it guarded
+# did not exist yet. That is defensible for a scaffold and indefensible once
+# the tests are real: an advisory prohibited-capabilities job reports green for
+# months and is discovered at the worst possible moment. The only step still
+# advisory is mypy, and it says so.
 
 on:
   push:
@@ -18,12 +24,13 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Sync
         run: uv sync --all-extras --dev
-        continue-on-error: true   # remove once pyproject.toml lands
       - name: Ruff
         run: uv run ruff check .
-        continue-on-error: true
       - name: Types
         run: uv run mypy .
+        # Advisory. `strict = true` against a codebase with no runtime wired up
+        # yet produces noise that would train people to ignore this job. Flip to
+        # blocking when the pipeline lands, not before.
         continue-on-error: true
 
   prohibited:
@@ -32,20 +39,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      # These assert the absence of code paths and DB grants for the
-      # prohibited row of the PROJECT.md risk register (C12-C17).
-      # This job must NEVER be allowed to fail silently.
+      - name: Sync
+        run: uv sync --all-extras --dev
+
+      # A cheap check that holds even if Python is broken. It matches call
+      # SITES only -- `outbound_call(` and not `"outbound_call"` -- because the
+      # names also appear in `_PROHIBITED_BY_ABSENCE`, the frozenset that lists
+      # them so they can be checked for. The previous pattern matched that
+      # frozenset and failed against the guard it was guarding.
       - name: No outbound call path exists
         run: |
-          if grep -rniE "outbound_call|make_call|dial\(|originate|place_call" \
+          if grep -rnE "(outbound_call|make_call|place_call|originate_call|start_outbound|dial)[[:space:]]*\(" \
               --include="*.py" --include="*.ts" src/ 2>/dev/null; then
             echo "::error::Outbound call path detected. C12 is prohibited in v1."
             exit 1
           fi
           echo "OK: no outbound call path."
+
+      # These assert the absence of code paths and DB grants for the prohibited
+      # row of the risk register (C12-C17). BLOCKING. Do not add
+      # continue-on-error to this step -- a prohibited tier that is only
+      # advisory is a comment, which PROJECT.md 2.1 explicitly rejects.
       - name: Prohibited-capability tests
         run: uv run pytest tests/test_prohibited.py -v
-        continue-on-error: true   # remove once tests land
+
+      - name: Tenant isolation tests
+        run: uv run pytest tests/test_tenant_isolation.py -v
 
   validators:
     name: Deterministic validators (G6)
@@ -53,8 +72,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Sync
+        run: uv sync --all-extras --dev
       - run: uv run pytest tests/ -v --cov --cov-report=term-missing
-        continue-on-error: true
 
   evals:
     name: Eval suite (G5)
@@ -62,10 +82,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Sync
+        run: uv sync --all-extras --dev
+
+      # Blocking. Case conformance does not need the pipeline, and this is what
+      # makes parallel case authoring safe.
+      - name: Validate eval cases
+        run: uv run python -m evals.run --validate
+
       # Compares against the committed baseline so a regression is a number,
-      # not a feeling.
+      # not a feeling. Exits 0 while no baseline exists (by design -- see
+      # evals/run.py::cmd_baseline), so this is blocking without being a lie.
       - name: Run evals against baseline
         run: uv run python -m evals.run --baseline evals/baseline/latest.json
-        continue-on-error: true
         env:
           DRY_RUN: "true"

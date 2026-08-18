@@ -44,7 +44,19 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "S", "ASYNC"]
-ignore = ["S101"]  # assert is fine in tests
+ignore = [
+    "S101",   # assert is fine in tests
+    # N818 wants an Error suffix on every exception. `SlotUnavailable` and
+    # `NotAuthorized` read as the conditions they are, and they are raised in
+    # code whose whole job is being readable at a glance. Renaming them to
+    # SlotUnavailableError buys nothing and touches the authorization path.
+    "N818",
+    # UP042 wants StrEnum instead of (str, Enum). Deliberately declined: the two
+    # differ in what str() and format() produce, and these enum values are
+    # serialised into eval YAML, audit rows and DB columns. Changing the wire
+    # format of Tier and Violation to satisfy a style rule is a bad trade.
+    "UP042",
+]
 
 [tool.mypy]
 python_version = "3.11"
@@ -54,3 +66,4 @@ warn_unreachable = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]

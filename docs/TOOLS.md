@@ -2,7 +2,11 @@
 
 > Prefer `confirm_booking(slot_id, msisdn, name)` over "access to the scheduler."
 
-Six tools. No general-purpose escape hatch — there is no `run_query`, no `call_hmis`, no `execute`.
+Eight tools. No general-purpose escape hatch — there is no `run_query`, no `call_hmis`, no `execute`.
+
+> Was six at G4. `find_appointments` was added by D10 when eval authors found that `reschedule`
+> and `cancel` both require an `appointment_id` no tool produced; `transfer_to_human` was always present
+> and simply uncounted.
 
 ## The registry
 
@@ -23,6 +27,7 @@ Six tools. No general-purpose escape hatch — there is no `run_query`, no `call
 |---|---|---|---|
 | `get_clinic_info` | autonomous | no | ✅ |
 | `find_slots` | autonomous | no | ✅ |
+| `find_appointments` | autonomous | no | ❌ identity-gated |
 | `hold_slot` | autonomous | **yes** | ❌ |
 | `confirm_booking` | explicit approval | yes | ❌ |
 | `reschedule_appointment` | explicit approval | yes | ❌ |
@@ -61,11 +66,13 @@ Redaction of card and Aadhaar patterns runs *before* text reaches a prompt, a lo
 
 `adapters/base.SchedulingAdapter` is a Protocol. Everything above it — tools, state machine, validators, evals — is written against the interface, never against Postgres.
 
-- `PostgresAdapter` — designated source of truth for clinics with no API. **To build.**
+- `PostgresAdapter` — designated source of truth for clinics with no API. **Built** (`adapters/postgres.py`). Every statement names `clinic_id` in its own WHERE or CHECK even though RLS already confines the transaction, and `connect()` refuses to start as a role that bypasses RLS — a superuser connection would make every policy inert, silently.
 - `HmisAdapter` — Halemind / KareXpert / Practo Ray / SoftClinic. **Deliberately unimplemented.** No clinic is engaged; writing an adapter against a guessed API shape would be fiction. When a real clinic exists it implements this Protocol and nothing above changes.
 
 ## Prohibited by absence
 
 No tool exists for outbound calls (C12), clinical advice (C13), results or prescriptions (C14), payment (C15), deletion (C16), or config changes (C17).
 
-Not "a tool that refuses" — **no tool.** Unknown tool names still produce a rejected audit row, so an attempt is visible without a code path existing. `tests/test_prohibited.py` asserts this, as a blocking CI job.
+Not "a tool that refuses" — **no tool.** Unknown tool names still produce a rejected audit row, so an attempt is visible without a code path existing.
+
+`tests/test_prohibited.py` asserts this as a **blocking CI job** — genuinely blocking as of 2026-08-17, when the tests were written and `continue-on-error` came off the step.
