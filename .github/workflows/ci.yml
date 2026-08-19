@@ -70,6 +70,13 @@ jobs:
       - name: Tenant isolation tests
         run: uv run pytest tests/test_tenant_isolation.py -v
 
+      # C13 is the one prohibited capability that cannot be enforced by
+      # absence -- a model can simply say the words. PROJECT.md 2.1 names this
+      # classifier as the control, so it belongs in the blocking job with the
+      # rest of the prohibited row rather than only in the general suite.
+      - name: Clinical guard (C13/C14)
+        run: uv run pytest tests/test_clinical_guard.py -v
+
   validators:
     name: Deterministic validators (G6)
     runs-on: ubuntu-latest

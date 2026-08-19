@@ -14,7 +14,7 @@ No validator lives only in a prompt. Each is independently runnable and tested.
 | `test_double_booking.py` | Two concurrent confirmations for one slot cannot both win. Idempotency key honoured |
 | `test_identity.py` | ✅ **Done.** Identity is server-side, not a model-supplied argument; `find_appointments` accepts no msisdn; writes bound to the verified caller in SQL. The 3-attempt cap belongs to the state machine and is still to do |
 | `test_consent.py` | Consent artefact exists and is keyed to the call trace ID before any write |
-| `test_clinical_guard.py` | Output-side classifier catches advice, triage, symptom interpretation, results, prescriptions — tested against paraphrases, not keywords |
+| `test_clinical_guard.py` | ✅ **Done.** Output-side classifier catches advice, triage (both directions), symptom interpretation, results, dosage — paraphrases not keywords, ta/hi/en parity, grounded config exempt. **Runs in the blocking CI job** |
 | `test_tenant_isolation.py` | No query can cross `clinic_id`. Attempted cross-tenant read returns empty, not another clinic's row |
 | `test_injection.py` | Caller speech cannot redefine goals or trigger a tool call. Containment, not detection |
 | `test_redaction.py` | Card-number and ID patterns are redacted from transcripts and logs before persistence |

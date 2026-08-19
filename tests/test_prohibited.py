@@ -449,6 +449,42 @@ async def test_clinical_request_has_a_transfer_reason_to_route_to() -> None:
 
 
 # ==========================================================================
+# C13 — the one prohibited capability that needs code rather than absence
+# ==========================================================================
+
+
+def test_the_clinical_guard_exists_and_blocks() -> None:
+    """Every other prohibited capability is enforced by something not existing.
+    C13 cannot be: removing a code path does not stop an utterance, because the
+    model can just say the words.
+
+    PROJECT.md 2.1 names the output-side classifier as the control. This module
+    asserts it is present and refuses -- the exhaustive cases live in
+    tests/test_clinical_guard.py, which runs in the same blocking CI job.
+    """
+    from voicedesk.safety.clinical import guard_agent_turn
+
+    advice = "You should stop taking that tablet before the scan."
+    spoken, verdict = guard_agent_turn(advice)
+
+    assert verdict.blocked
+    assert spoken != advice, "the blocked utterance must never be what gets said"
+
+
+def test_the_clinical_guard_is_not_a_model_call() -> None:
+    """G6 requires validators to be independently runnable. A guard that asks
+    an LLM whether an LLM just gave medical advice shares its failure modes and
+    its jailbreaks, and cannot run in CI on a bare checkout."""
+    import voicedesk.safety.clinical as guard
+
+    called = called_names(Path(guard.__file__))
+    for forbidden in ("generate_content", "chat", "completion", "invoke_model"):
+        assert forbidden not in called, (
+            f"the clinical guard calls {forbidden}() -- it must be deterministic"
+        )
+
+
+# ==========================================================================
 # Redaction — C15 detection triggers redaction, not a payment path
 # ==========================================================================
 

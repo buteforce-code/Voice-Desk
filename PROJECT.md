@@ -85,7 +85,7 @@ A stranger holding the transcript, the resulting appointment row and the audit l
 | C10 | Warm transfer to human | Autonomous | Always permitted. Transfer is the safe default on any uncertainty |
 | C11 | Write transcript + audit row | Autonomous | Append-only table; no delete grant |
 | C12 | **Outbound call** | **Prohibited (v1)** | No dialer credential issued. No outbound code path exists. Unlocks only behind DLT + 1600-series + consent artefact store |
-| C13 | **Clinical advice / triage / symptom interpretation** | **Prohibited** | Hard refusal + immediate transfer offer; G6 deterministic classifier on agent output, not only on prompt |
+| C13 | **Clinical advice / triage / symptom interpretation** | **Prohibited** | Hard refusal + immediate transfer offer; deterministic classifier on agent output — `safety/clinical.py`, **implemented 2026-08-19**, blocking in CI |
 | C14 | **Disclose diagnosis, test results, prescriptions** | **Prohibited** | Not retrievable — the agent has no grant to any clinical table |
 | C15 | **Take payment / card details** | **Prohibited** | No payment tool exists. Detected card-number pattern in ASR triggers redaction + transfer |
 | C16 | Delete any record | **Prohibited** | No DELETE grant on any table for the agent role |
@@ -224,7 +224,7 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
 The baseline needs a running pipeline, which needed a working adapter, which needed tenant
 isolation to actually exist. That chain is the subject of D11.
 
-## 6. Validators (G6) — 5 modules, 259 tests, all blocking in CI
+## 6. Validators (G6) — 6 modules, 321 tests, all blocking in CI
 
 | Module | State |
 |---|---|
@@ -233,6 +233,7 @@ isolation to actually exist. That chain is the subject of D11.
 | `test_identity.py` | ✅ 23 tests. Identity is server-side, `find_appointments` takes no msisdn, writes bound to the verified caller in SQL, msisdn normalisation |
 | `test_config.py` | ✅ 58 tests. Startup validation, secret redaction, and the demo tenant the eval suite references |
 | `test_state_machine.py` | ✅ 56 tests. Edge table, SQL/Python enum parity, approval-token lifecycle, 3-attempt identity cap, bounded repair |
+| `test_clinical_guard.py` | ✅ 62 tests. C13/C14 output classifier — advice, triage in both directions, symptom interpretation, results, dosage; ta/hi/en parity; grounded config exempt. **Blocking job** |
 | `test_slot_validity.py` · `test_double_booking.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
 
 Both existing modules run on a bare checkout — no database, no model, no telephony account. That
@@ -445,11 +446,55 @@ control was moved to a safer home in a commit that could not wire the new home u
 covering it all passed because they construct contexts directly. `state.py` closes it — and
 `CallSession.tool_context()` is now the only thing in `src/` that builds one.
 
+### D15 — the clinical guard, and the gap it filled (2026-08-19)
+
+Every prohibited capability is enforced by absence — no dialer, no payment tool, no DELETE grant,
+no clinical table. **C13 is the one that cannot work that way**, because removing a code path does
+not stop an utterance. PROJECT.md §2.1 has said so since G2:
+
+> A prompt saying "never give medical advice" is not a control; C13's output-side classifier is.
+
+That classifier did not exist. For three days the risk register named a control that was not
+there, and **31 eval cases probed it.** The prohibited row was one-seventh prose.
+
+`safety/clinical.py` is deterministic, not a model call: G6 requires validators to be
+independently runnable, and a guard that asks an LLM whether an LLM just gave medical advice
+shares its failure modes and its jailbreaks.
+
+**It is not a keyword list.** A clinical noun is not a violation — callers say "cardiology" and the
+agent reads prep instructions aloud. What makes an utterance clinical is the *frame*: a directive,
+an inference, an urgency judgement, a dosage, or a claim about the caller's records. Most frames
+require a clinical term within 60 characters to fire at all.
+
+Two decisions worth recording:
+
+- **Triage is blocked in both directions.** Telling a caller it is an emergency is obviously
+  clinical. Telling them it can safely wait is the one people forget, has worse consequences, and
+  sounds like good customer service rather than like advice.
+- **Grounded config content is exempt.** Prep instructions are directives with a clinical shape,
+  retrieved from a config key with a source. `grounded_spans` neutralises them before
+  classification — they are tool output, not the model's claims. A test proves the same sentence
+  is blocked when it is *not* grounded, because provenance is the entire distinction.
+
+Error costs are asymmetric and the thresholds reflect it: a false positive is an unnecessary
+transfer, which is the documented safe default; a false negative is a voice agent giving a patient
+medical advice. Tuned to over-refuse.
+
+**The test that mattered most caught a lexicon that was much weaker in Hindi and Tamil than in
+English, while every test passed.** `शायद यह कोई इंफेक्शन हो सकता है` walked straight through: the
+inference frame matched, found no clinical term nearby, and was filtered out — because the lexicon
+held only native-script words and the caller used the transliterated English one. Almost nobody
+says प्रतिजैविक when they mean antibiotic. D4 records that code-switching within a single utterance
+is the norm for these callers, and borrowed clinical vocabulary is the most code-switched register
+there is. `malicious-012` exists to catch exactly this asymmetry and would have found it at G5;
+the guard now carries Devanagari and Tamil transliterations of the English terms.
+
 ---
 
 ## Log
 
 - **2026-08-16** — G0 scaffold. G1 and G2 written. D1–D4 recorded.
+- **2026-08-19** — C13/C14 output-side clinical guard implemented (D15) — the prohibited row's only capability that needs code rather than absence, and the only one that had none. Blocking in CI.
 - **2026-08-19** — State machine implemented (`state.py`): edge table, approval-token lifecycle, 3-attempt identity cap, bounded repair. Resolved a G3 contradiction — the write now happens in `execute`, not `approval` (D13) — and closed the gap where nothing could construct a `ToolContext` at all (D14).
 - **2026-08-19** — Config layer: `config.py` reads and validates the environment (nothing had read `.env` at all), `tenants.py` loads clinic config from disk, and `config/tenants/meridian.yaml` defines the demo tenant all 58 eval cases referenced and which existed nowhere. Rules that lived only in prose — Vertex AI blocked, Mumbai residency, call ceiling inside Railway's connection limit — are now startup failures.
 - **2026-08-19** — Identity moved from tool arguments to `ToolContext` (D12); `find_appointments` was an enumeration oracle. `test_identity.py` + `bad_input-010`. Repo pushed to a private GitHub remote and **CI ran for the first time** — it had never executed: no remote, and a branch filter matching `main` when the branch is `master`. Real hospital name scrubbed from PROJECT.md.
