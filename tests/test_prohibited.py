@@ -13,6 +13,7 @@ a control, and neither is a handler that refuses.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -33,6 +34,42 @@ from conftest import (
 from voicedesk.tools.registry import NotAuthorized, ToolRegistry, ToolSpec
 from voicedesk.tools.scheduling import _PROHIBITED_BY_ABSENCE
 from voicedesk.tools.schemas import GetClinicInfoIn, GetClinicInfoOut, Tier
+
+
+def _tracked_files() -> list[str]:
+    """Repo-relative paths that would be published.
+
+    Prefers `git ls-files`. Falls back to walking the tree when git is absent --
+    a slim container, a source tarball -- because a check on whether a real
+    organisation's name is about to be published must never quietly not run.
+    The fallback over-scans rather than under-scans, which is the right
+    direction for this particular question.
+    """
+    git = shutil.which("git")
+    if git:
+        return subprocess.run(  # noqa: S603 - resolved path, literal argv, no shell
+            [git, "ls-files"],
+            cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+        ).stdout.split()
+
+    # `.agents` is a symlink to the Buteforce vault and is gitignored, because
+    # the vault is exactly where the private prospect profile is SUPPOSED to
+    # live. A fallback that walks into it reports the vault's own correct
+    # content as a leak -- which is how a useful check gets deleted for crying
+    # wolf. Symlinked directories are pruned for the same reason.
+    skip = {".git", ".agents", ".venv", "venv", "__pycache__", "node_modules",
+            ".pytest_cache", ".ruff_cache", ".mypy_cache"}
+
+    found: list[str] = []
+    for root, dirs, files in os.walk(REPO_ROOT):
+        dirs[:] = [
+            d for d in dirs
+            if d not in skip and not (Path(root) / d).is_symlink()
+        ]
+        for name in files:
+            rel = (Path(root) / name).relative_to(REPO_ROOT)
+            found.append(str(rel).replace("\\", "/"))
+    return found
 
 # ==========================================================================
 # C12 — outbound calls
@@ -421,12 +458,7 @@ def test_no_real_clinic_name_appears_in_any_tracked_file() -> None:
     pushed to a public remote. Scan everything git tracks, because "shippable"
     means the repository, not the Python package.
     """
-    git = shutil.which("git")
-    assert git, "git is required to enumerate tracked files"
-    tracked = subprocess.run(  # noqa: S603 - resolved path, literal argv, no shell
-        [git, "ls-files"],
-        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-    ).stdout.split()
+    tracked = _tracked_files()
 
     offenders = []
     for rel in tracked:
