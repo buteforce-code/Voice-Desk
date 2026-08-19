@@ -224,13 +224,14 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
 The baseline needs a running pipeline, which needed a working adapter, which needed tenant
 isolation to actually exist. That chain is the subject of D11.
 
-## 6. Validators (G6) — 3 of 10 modules, all blocking in CI
+## 6. Validators (G6) — 4 modules, 200 tests, all blocking in CI
 
 | Module | State |
 |---|---|
 | `test_prohibited.py` | ✅ 82 tests. C12–C17 unreachable, approval boundary, speculation tiering, redaction, no real clinic name in any tracked file |
 | `test_tenant_isolation.py` | ✅ 37 tests. Policy shape, fail-closed tenant function, adapter self-scoping, RLS-bypass refusal |
 | `test_identity.py` | ✅ 23 tests. Identity is server-side, `find_appointments` takes no msisdn, writes bound to the verified caller in SQL, msisdn normalisation |
+| `test_config.py` | ✅ 58 tests. Startup validation, secret redaction, and the demo tenant the eval suite references |
 | `test_slot_validity.py` · `test_double_booking.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
 
 Both existing modules run on a bare checkout — no database, no model, no telephony account. That
@@ -400,5 +401,6 @@ led to all of the above.
 ## Log
 
 - **2026-08-16** — G0 scaffold. G1 and G2 written. D1–D4 recorded.
+- **2026-08-19** — Config layer: `config.py` reads and validates the environment (nothing had read `.env` at all), `tenants.py` loads clinic config from disk, and `config/tenants/meridian.yaml` defines the demo tenant all 58 eval cases referenced and which existed nowhere. Rules that lived only in prose — Vertex AI blocked, Mumbai residency, call ceiling inside Railway's connection limit — are now startup failures.
 - **2026-08-19** — Identity moved from tool arguments to `ToolContext` (D12); `find_appointments` was an enumeration oracle. `test_identity.py` + `bad_input-010`. Repo pushed to a private GitHub remote and **CI ran for the first time** — it had never executed: no remote, and a branch filter matching `main` when the branch is `master`. Real hospital name scrubbed from PROJECT.md.
 - **2026-08-17** — Repo audited against its own claims. RLS policies written (`0002`), `PostgresAdapter` built, first two G6 validator modules landed (119 tests, blocking in CI). Six defects found and fixed; D11 records them. Docs resynced: eight tools, not six.

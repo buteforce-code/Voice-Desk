@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from voicedesk.adapters.base import SchedulingAdapter
+from voicedesk.tenants import Tenant
 from voicedesk.tools.registry import ToolRegistry
 from voicedesk.tools.schemas import (
     CancelIn,
@@ -45,12 +46,25 @@ class TenantConfig:
         self.escalation_msisdn = escalation_msisdn
 
     def get(self, field: str, specialty: str | None = None) -> tuple[str, str]:
-        key = f"{field}.{specialty}" if specialty else field
+        """Returns (value, source_key). The key is evidence: the dashboard
+        renders it, and a claim with no source is a grounding bug."""
+        key = f"{field}.{specialty.lower()}" if specialty else field
         if key in self._data:
             return self._data[key], key
         if field in self._data:
             return self._data[field], field
         raise KeyError(field)
+
+    @classmethod
+    def from_tenant(cls, tenant: Tenant) -> TenantConfig:
+        """Build from a validated tenant file.
+
+        The only supported way to construct one outside tests. Hard rule 8:
+        tenant identity lives in config, never in code -- so the path from a
+        YAML file to what the agent says about the clinic runs entirely through
+        the loader's validation.
+        """
+        return cls(dict(tenant.info), escalation_msisdn=tenant.escalation_msisdn)
 
 
 def register_scheduling_tools(

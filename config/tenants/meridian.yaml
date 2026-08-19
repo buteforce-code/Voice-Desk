@@ -1,0 +1,168 @@
+# Meridian Speciality Clinic — the demo tenant.
+#
+# FICTIONAL. PROJECT.md D5: every shippable artifact uses an invented clinic
+# with invented doctors and an obviously-fake escalation number. No real
+# hospital's name, roster or phone number appears in this repository, and
+# tests/test_prohibited.py scans every tracked file to keep it that way.
+#
+# All 58 eval cases declare `tenant: meridian` and this file is what that
+# refers to. The roster is drawn from the names those cases already speak, so
+# a caller asking for a doctor by name in an eval is asking for someone who
+# exists here.
+#
+# TWO DELIBERATE NAME COLLISIONS, do not "tidy" them:
+#
+#   * Four Anithas. ambiguous-009 and its neighbours turn on a partial name
+#     matching more than one record. A roster with unique first names makes
+#     those cases unfalsifiable.
+#   * Thirumalai Sekar AND Thirumurugan Sekaran, both ENT. codeswitch-009 is
+#     built on it: ASR at telephony band returns "Tirumalai Shekhar" or
+#     "Thiru Malai Sekar" for the first, and a fuzzy matcher scores those
+#     against the second at respectable similarity, takes it silently, and
+#     books the wrong doctor. Removing either name deletes the test.
+#
+# Doctor↔specialty pairings here are consistent with the specialties the eval
+# cases assert for the doctors they name. Pairings for doctors mentioned only
+# in passing are chosen, not derived — full reconciliation belongs with fixture
+# authoring, which PROJECT.md §5 already lists as open.
+
+clinic_id: d0c70000-0000-4000-8000-000000000001
+slug: meridian
+display_name: Meridian Speciality Clinic
+timezone: Asia/Kolkata
+config_version: "2026-08-19.1"
+
+languages:
+  - ta-IN
+  - hi-IN
+  - en-IN
+
+# Every uncertain call ends here. C10: transfer is always permitted and is the
+# safe default, so this number is load-bearing rather than decorative.
+escalation_msisdn: "+919000000000"
+
+info:
+  opd_hours: >-
+    Monday to Saturday, 9:00 AM to 1:00 PM and 5:00 PM to 8:00 PM.
+    Closed Sundays and public holidays.
+  address: >-
+    Meridian Speciality Clinic, 14 Fictional Avenue, Sector 2,
+    Chennai 600000
+  consult_fee: "500 rupees for a first consultation, 300 for a follow-up within 30 days"
+  specialties: >-
+    Cardiology, Dermatology, ENT, Endocrinology, General Medicine,
+    Gynaecology, Orthopaedics, Paediatrics
+  doctors: >-
+    Twenty-four consultants across eight departments. Ask for a specialty and
+    the desk will read out who is available.
+  prep_instructions: >-
+    Please arrive fifteen minutes early and bring a photo ID and any previous
+    reports issued by this clinic. Payment is at the counter only.
+  languages: "Tamil, Hindi and English"
+
+# Flattened by the loader into `field.specialty` keys, which is what
+# TenantConfig.get(field, specialty) checks before the bare field.
+by_specialty:
+  Cardiology:
+    consult_fee: "900 rupees for a first consultation, 500 for a follow-up"
+    prep_instructions: >-
+      Please arrive thirty minutes early and bring a photo ID. Do not eat for
+      four hours before the appointment.
+  Endocrinology:
+    consult_fee: "800 rupees for a first consultation, 500 for a follow-up"
+    prep_instructions: >-
+      Please arrive thirty minutes early with a photo ID, and do not eat or
+      drink anything except water for eight hours beforehand.
+  Paediatrics:
+    prep_instructions: >-
+      Please bring the child's immunisation card and arrive fifteen minutes
+      early.
+
+doctors:
+  # -- Cardiology ------------------------------------------------------
+  - doctor_id: d0c70001-0000-4000-8000-000000000001
+    full_name: Dr. Anitha Varadhan
+    specialty: Cardiology
+  - doctor_id: d0c70001-0000-4000-8000-000000000002
+    full_name: Dr. Vasanth Ramaswamy
+    specialty: Cardiology
+  - doctor_id: d0c70001-0000-4000-8000-000000000003
+    full_name: Dr. Sanjay Bhandari
+    specialty: Cardiology
+
+  # -- Dermatology -----------------------------------------------------
+  - doctor_id: d0c70002-0000-4000-8000-000000000001
+    full_name: Dr. Shalini Rege
+    specialty: Dermatology
+  - doctor_id: d0c70002-0000-4000-8000-000000000002
+    full_name: Dr. Meenakshi Iyer
+    specialty: Dermatology
+
+  # -- ENT — the codeswitch-009 pair. Keep both. -----------------------
+  - doctor_id: d0c70003-0000-4000-8000-000000000001
+    full_name: Dr. Thirumalai Sekar
+    specialty: ENT
+  - doctor_id: d0c70003-0000-4000-8000-000000000002
+    full_name: Dr. Thirumurugan Sekaran
+    specialty: ENT
+  - doctor_id: d0c70003-0000-4000-8000-000000000003
+    full_name: Dr. Prakash Menon
+    specialty: ENT
+
+  # -- Endocrinology ---------------------------------------------------
+  - doctor_id: d0c70004-0000-4000-8000-000000000001
+    full_name: Dr. Karthik Venkatesan
+    specialty: Endocrinology
+  - doctor_id: d0c70004-0000-4000-8000-000000000002
+    full_name: Dr. Ravi Chandrasekar
+    specialty: Endocrinology
+  - doctor_id: d0c70004-0000-4000-8000-000000000003
+    full_name: Dr. Karthikeyan Balasubramanian
+    specialty: Endocrinology
+
+  # -- General Medicine — the Anitha cluster. Keep all four. -----------
+  - doctor_id: d0c70005-0000-4000-8000-000000000001
+    full_name: Dr. Anitha Sundaresan
+    specialty: General Medicine
+  - doctor_id: d0c70005-0000-4000-8000-000000000002
+    full_name: Dr. Anitha Raghavan
+    specialty: General Medicine
+  - doctor_id: d0c70005-0000-4000-8000-000000000003
+    full_name: Dr. Anitha Raghunathan
+    specialty: General Medicine
+  - doctor_id: d0c70005-0000-4000-8000-000000000004
+    full_name: Dr. Suresh Iyer
+    specialty: General Medicine
+  - doctor_id: d0c70005-0000-4000-8000-000000000005
+    full_name: Dr. Ramesh Pillai
+    specialty: General Medicine
+
+  # -- Gynaecology -----------------------------------------------------
+  - doctor_id: d0c70006-0000-4000-8000-000000000001
+    full_name: Dr. Fathima Rasheed
+    specialty: Gynaecology
+  - doctor_id: d0c70006-0000-4000-8000-000000000002
+    full_name: Dr. Sanjana Rao
+    specialty: Gynaecology
+
+  # -- Orthopaedics ----------------------------------------------------
+  - doctor_id: d0c70007-0000-4000-8000-000000000001
+    full_name: Dr. Vikram Shanmugam
+    specialty: Orthopaedics
+  - doctor_id: d0c70007-0000-4000-8000-000000000002
+    full_name: Dr. Kavitha Selvanayagam
+    specialty: Orthopaedics
+  - doctor_id: d0c70007-0000-4000-8000-000000000003
+    full_name: Dr. Suresh Raghunathan
+    specialty: Orthopaedics
+
+  # -- Paediatrics -----------------------------------------------------
+  - doctor_id: d0c70008-0000-4000-8000-000000000001
+    full_name: Dr. Priya Deshmukh
+    specialty: Paediatrics
+  - doctor_id: d0c70008-0000-4000-8000-000000000002
+    full_name: Dr. Naveen Alagappan
+    specialty: Paediatrics
+  - doctor_id: d0c70008-0000-4000-8000-000000000003
+    full_name: Dr. Naveen Balakrishnan
+    specialty: Paediatrics
