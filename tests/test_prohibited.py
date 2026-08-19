@@ -23,6 +23,7 @@ import pytest
 from conftest import (
     CLINIC_A,
     CLINIC_B,
+    FORBIDDEN_ORG_TOKENS,
     REPO_ROOT,
     called_names,
     make_ctx,
@@ -533,14 +534,23 @@ def test_no_real_clinic_name_appears_in_any_tracked_file() -> None:
     offenders = []
     for rel in tracked:
         path = REPO_ROOT / rel
-        if path.name == Path(__file__).name or not path.is_file():
-            continue  # this file names them in order to forbid them
+        if not path.is_file():
+            continue
         try:
-            body = path.read_text(encoding="utf-8").lower()
+            body = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        for forbidden in ("sitapati", "royapettah"):
-            if forbidden in body:
+
+        # A file that references FORBIDDEN_ORG_TOKENS is participating in this
+        # guard, not leaking. Exempting by filename was wrong: a second test
+        # module later named them in order to forbid them and tripped the
+        # check, which is how an exemption list becomes a maintenance trap.
+        if "FORBIDDEN_ORG_TOKENS" in body:
+            continue
+
+        lowered = body.lower()
+        for forbidden in FORBIDDEN_ORG_TOKENS:
+            if forbidden in lowered:
                 offenders.append(f"{rel} contains '{forbidden}'")
 
     assert not offenders, (

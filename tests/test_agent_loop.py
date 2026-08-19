@@ -18,7 +18,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from conftest import REPO_ROOT
+from conftest import FORBIDDEN_ORG_TOKENS, REPO_ROOT
 
 from voicedesk.adapters.memory import InMemoryAdapter
 from voicedesk.agent import Agent
@@ -434,7 +434,7 @@ def test_the_prompt_tells_the_model_its_verification_status(tenant) -> None:
 def test_no_real_clinic_name_is_in_the_prompt_source() -> None:
     """D5 again, at the one surface that gets read aloud to callers."""
     src = (REPO_ROOT / "src" / "voicedesk" / "prompts.py").read_text(encoding="utf-8")
-    for forbidden in ("sitapati", "royapettah"):
+    for forbidden in FORBIDDEN_ORG_TOKENS:
         assert forbidden not in src.lower()
 
 

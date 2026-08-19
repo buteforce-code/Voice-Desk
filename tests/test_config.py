@@ -257,6 +257,40 @@ def test_non_secret_values_stay_readable() -> None:
 
 
 # ==========================================================================
+# .env is actually read
+# ==========================================================================
+
+
+def test_a_dotenv_file_is_loaded(tmp_path, monkeypatch) -> None:
+    """python-dotenv has been a declared dependency since G0, .env.example says
+    "copy to .env and fill in", and nothing ever called it. A key placed in
+    .env was silently ignored and the chat shell reported it as unset -- the
+    worst version of the bug, because the user did the right thing and was told
+    they had not."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("GOOGLE_AI_API_KEY=from-the-file\n", encoding="utf-8")
+
+    settings = Settings.load(env_file=env_file)
+    assert settings.require_llm() == "from-the-file"
+
+
+def test_a_real_environment_variable_beats_the_file(tmp_path, monkeypatch) -> None:
+    """Otherwise debugging a deployment means wondering which of the two is in
+    force. A value injected by the host must win over a stale local file."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("GOOGLE_AI_API_KEY=from-the-file\n", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "from-the-environment")
+
+    settings = Settings.load(env_file=env_file)
+    assert settings.require_llm() == "from-the-environment"
+
+
+def test_a_missing_dotenv_file_is_not_an_error(tmp_path) -> None:
+    """CI and a bare checkout have no .env, and must not need one."""
+    assert Settings.load(env_file=tmp_path / "nope.env") is not None
+
+
+# ==========================================================================
 # The tenant the eval suite already depends on
 # ==========================================================================
 

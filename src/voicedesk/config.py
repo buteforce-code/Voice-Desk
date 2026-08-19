@@ -53,6 +53,29 @@ class ConsentStore(str, Enum):
     store is an interface from day one so that swap is a config change."""
 
 
+def load_dotenv_once(path: Path | None = None) -> None:
+    """Read `.env` into the environment, without overriding what is already set.
+
+    `python-dotenv` has been a declared dependency since G0, `.env.example`
+    says "copy to .env and fill in", and nothing called it. A key placed in
+    `.env` was silently ignored and the shell reported it as unset -- which is
+    the worst version of this bug, because the user has done the right thing
+    and is told they have not.
+
+    Real environment variables win. A value exported in a shell or injected by
+    Railway must beat a stale line in a local file, or debugging a deployment
+    means wondering which of the two is in force.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # pragma: no cover - dotenv is a declared dependency
+        return
+
+    candidate = path or Path.cwd() / ".env"
+    if candidate.is_file():
+        load_dotenv(candidate, override=False)
+
+
 def _env(name: str, default: str | None = None) -> str | None:
     value = os.environ.get(name, default)
     if value is None:
@@ -152,8 +175,9 @@ class Settings:
     # ---------------------------------------------------------------------
 
     @classmethod
-    def load(cls) -> Settings:
+    def load(cls, *, env_file: Path | None = None) -> Settings:
         """Read and validate. Raises ConfigError with the offending variable."""
+        load_dotenv_once(env_file)
         settings = cls(
             dry_run=_bool("DRY_RUN", True),
             kill_switch=_bool("KILL_SWITCH", False),

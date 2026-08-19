@@ -31,6 +31,12 @@ CLINIC_B = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 # Fictional numbers in the valid Indian mobile range. VERIFIED_MSISDN is the
 # caller who passed the DOB challenge; OTHER_MSISDN is anybody else.
+# The target prospect is a real organisation that has never been contacted.
+# D5: it is named only in the private vault note, never in this repo. Defined
+# once here so the tests that enforce that share one list -- and so the scan
+# can tell a file participating in the guard from a file leaking the name.
+FORBIDDEN_ORG_TOKENS = ("sitapati", "royapettah")
+
 VERIFIED_MSISDN = "+919876543210"
 OTHER_MSISDN = "+919812345678"
 
