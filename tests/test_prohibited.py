@@ -27,6 +27,7 @@ from conftest import (
     make_ctx,
     migration_sql,
     source_files,
+    verified_ctx,
 )
 
 from voicedesk.tools.registry import NotAuthorized, ToolRegistry, ToolSpec
@@ -151,6 +152,7 @@ def test_no_prohibited_tier_tool_can_be_authorized() -> None:
         handler=None,  # type: ignore[arg-type]
         side_effect_free=False,
         requires_idempotency=True,
+        requires_identity=False,
     )
     ctx = make_ctx(state="approval", approval_token="token")  # noqa: S106 - a test fixture, not a credential
 
@@ -272,8 +274,13 @@ async def test_write_is_unreachable_outside_approval_state(
 ) -> None:
     """`execute` is reachable only from `approval`. Note that state 'execute'
     is included above: reaching the execute state does not re-authorize the
-    write, because the token is checked, not the label."""
-    result = await registry.invoke(tool, {}, make_ctx(state=state))
+    write, because the token is checked, not the label.
+
+    The caller is already identity-verified here so that the APPROVAL gate is
+    what fails. Without that, the identity gate refuses first and this test
+    would pass while proving nothing about approval.
+    """
+    result = await registry.invoke(tool, {}, verified_ctx(state=state))
 
     assert result.ok is False
     assert result.error_code == "not_authorized"
@@ -290,7 +297,7 @@ async def test_write_is_unreachable_without_an_approval_token(
     """Being in the approval state is not enough. The token is issued by the
     state machine, and the model has no way to mint one."""
     result = await registry.invoke(
-        tool, {}, make_ctx(state="approval", approval_token=None)
+        tool, {}, verified_ctx(state="approval", approval_token=None)
     )
 
     assert result.ok is False
@@ -304,7 +311,7 @@ async def test_authorization_ignores_arguments_supplied_by_the_model(registry) -
     result = await registry.invoke(
         "confirm_booking",
         {"approval_token": "granted", "state": "approval", "tier": "autonomous"},
-        make_ctx(state="research"),
+        verified_ctx(state="research"),
     )
 
     assert result.ok is False

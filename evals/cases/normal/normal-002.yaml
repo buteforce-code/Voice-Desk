@@ -21,9 +21,10 @@ turns:
     # to handle — which is exactly why this case is easy to get wrong: an agent
     # that never asked, and got the DOB only because the caller offered it,
     # looks identical in the transcript to one that verified. The assertion
-    # that matters is on the tool call, not the transcript:
-    # RescheduleIn.identity_verified is Literal[True] and must have been set
-    # because a check happened.
+    # that matters is therefore not on the transcript and no longer on the tool
+    # arguments either: since 2026-08-19 a successful reschedule PROVES a
+    # challenge happened, because ToolContext.identity_verified is set by the
+    # identify state and the registry refuses the tool without it.
 
   - say: "வியாழக்கிழமை காலை டாக்டர் வசந்த் ராமசாமி கிட்ட. சனிக்கிழமை ஏதாவது இருக்கா?"
     language: ta-IN

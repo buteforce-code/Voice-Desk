@@ -27,11 +27,11 @@ Eight tools. No general-purpose escape hatch — there is no `run_query`, no `ca
 |---|---|---|---|
 | `get_clinic_info` | autonomous | no | ✅ |
 | `find_slots` | autonomous | no | ✅ |
-| `find_appointments` | autonomous | no | ❌ identity-gated |
+| `find_appointments` | autonomous | no | ❌ identity-gated · takes **no** msisdn, subject comes from the session |
 | `hold_slot` | autonomous | **yes** | ❌ |
 | `confirm_booking` | explicit approval | yes | ❌ |
-| `reschedule_appointment` | explicit approval | yes | ❌ |
-| `cancel_appointment` | explicit approval | yes | ❌ |
+| `reschedule_appointment` | explicit approval | yes | ❌ identity-gated |
+| `cancel_appointment` | explicit approval | yes | ❌ identity-gated |
 | `transfer_to_human` | autonomous | no | ✅ |
 
 ## Three design choices worth naming
@@ -39,8 +39,12 @@ Eight tools. No general-purpose escape hatch — there is no `run_query`, no `ca
 **1. Authority never comes from model output.**
 `ToolContext` is built by the call session. The model cannot assert its own `clinic_id`, its own `state`, or its own `approval_token`. An `explicit_approval` tool checks `ctx.state == "approval"` and a token the state machine issued — so the sole path to a write runs through the one state that requires the caller to have said yes.
 
-**2. Verification is in the type, not the prompt.**
-`RescheduleIn.identity_verified: Literal[True]`. There is no way to express an unverified reschedule that survives validation. "I forgot to check identity" becomes a schema error at the boundary rather than a bug found in production.
+**2. Verification is in the session, not in the arguments.**
+`ToolContext.identity_verified` is set by the state machine when the `identify` state completes a DOB challenge. The registry refuses `find_appointments`, `reschedule_appointment` and `cancel_appointment` without it, and the subject of a lookup comes from `ToolContext.verified_msisdn` — never from a field the model fills.
+
+This was originally `identity_verified: Literal[True]` on the three tool *input* schemas, described here as making an unverified reschedule inexpressible. It did not. The model writes tool arguments, and `Literal[True]` admits exactly one value, so the model always set it and validation always passed — **a control that cannot fail is not a control.** `find_appointments` was the live consequence: AUTONOMOUS tier, model-supplied phone number, so it answered "does this number have appointments at this clinic" for any number, at any point in a call.
+
+Two eval cases had already spotted it and contradicted each other. `bad_input-009`: *"it does nothing whatsoever to stop a model from writing True because the field demanded it."* `malicious-003`: *"an unverified cancellation is not expressible in the schema."* The pessimistic one was right. Fixed 2026-08-19; `tests/test_identity.py` is the reason the optimistic one is now also true.
 
 **3. Speculation is tiered, not banned and not free.**
 Prefetching `find_slots` on high-confidence intent saves 200–400ms. Prefetching `confirm_booking` would mean acting on a half-heard sentence before the caller finished — textbook excessive agency.

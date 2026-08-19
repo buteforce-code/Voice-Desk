@@ -101,16 +101,22 @@ def register_scheduling_tools(
         input_model=FindAppointmentsIn,
         output_model=FindAppointmentsOut,
         side_effect_free=True,
+        requires_identity=True,
     )
     async def find_appointments(
         args: FindAppointmentsIn, ctx: ToolContext
     ) -> FindAppointmentsOut:
-        # Side-effect free, so technically speculatable -- but identity_verified
-        # is Literal[True], and identity is not established until the identify
-        # state completes. There is nothing to speculate on before then.
+        # Side-effect free, so technically speculatable -- but the registry
+        # refuses it until the identify state has completed a challenge, and
+        # there is nothing to speculate on before then.
+        #
+        # The subject is ctx.verified_msisdn, never an argument. When the model
+        # supplied the number this tool answered "does <any number> have
+        # appointments here" for anyone who asked.
+        assert ctx.verified_msisdn is not None  # noqa: S101 - guaranteed by requires_identity
         appts = await adapter.find_appointments(
             ctx.clinic_id,
-            patient_msisdn=args.patient_msisdn,
+            patient_msisdn=ctx.verified_msisdn,
             include_past=args.include_past,
         )
         return FindAppointmentsOut(appointments=appts)
@@ -168,16 +174,21 @@ def register_scheduling_tools(
         input_model=RescheduleIn,
         output_model=RescheduleOut,
         side_effect_free=False,
+        requires_identity=True,
     )
     async def reschedule_appointment(
         args: RescheduleIn, ctx: ToolContext
     ) -> RescheduleOut:
-        # identity_verified is Literal[True] in the schema, so an unverified
-        # reschedule fails validation before reaching this line.
+        # Two independent gates, neither of them a model assertion: the registry
+        # refuses without ctx.identity_verified, and the adapter scopes the
+        # lookup to the verified number -- so someone else's appointment_id is
+        # not found rather than found and then refused.
+        assert ctx.verified_msisdn is not None  # noqa: S101 - guaranteed by requires_identity
         new_id, starts_at = await adapter.reschedule(
             ctx.clinic_id,
             appointment_id=args.appointment_id,
             new_slot_id=args.new_slot_id,
+            patient_msisdn=ctx.verified_msisdn,
             call_id=ctx.call_id,
         )
         return RescheduleOut(
@@ -193,12 +204,15 @@ def register_scheduling_tools(
         input_model=CancelIn,
         output_model=CancelOut,
         side_effect_free=False,
+        requires_identity=True,
     )
     async def cancel_appointment(args: CancelIn, ctx: ToolContext) -> CancelOut:
+        assert ctx.verified_msisdn is not None  # noqa: S101 - guaranteed by requires_identity
         cancelled_at = await adapter.cancel(
             ctx.clinic_id,
             appointment_id=args.appointment_id,
             reason=args.reason,
+            patient_msisdn=ctx.verified_msisdn,
             call_id=ctx.call_id,
         )
         return CancelOut(

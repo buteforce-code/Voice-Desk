@@ -201,12 +201,15 @@ class PostgresAdapter:
     ) -> list[AppointmentOut]:
         """Confirmed bookings for exactly one msisdn in exactly one clinic.
 
-        Identity is enforced at the tool boundary (`identity_verified:
-        Literal[True]`). This method's job is to be un-abusable even so: it
-        takes one number, matches it exactly, and returns nothing for a number
-        it does not hold. There is no prefix match and no wildcard, because an
-        enumeration oracle over "does this number have appointments here" is
-        itself a health-data leak.
+        Identity is enforced above, at the registry: the tool is refused
+        without `ToolContext.identity_verified`, and `patient_msisdn` arrives
+        from `ToolContext.verified_msisdn` rather than from model output.
+
+        This method's job is to be un-abusable even so: it takes one number,
+        matches it exactly, and returns nothing for a number it does not hold.
+        No prefix match, no wildcard. An enumeration oracle over "does this
+        number have appointments here" is itself a health-data leak, and for a
+        while this tool was one -- see PROJECT.md D12.
         """
         async with self._tenant_tx(clinic_id) as conn:
             rows = await conn.fetch(
@@ -355,7 +358,13 @@ class PostgresAdapter:
         return appointment_id, slot["starts_at"], slot["doctor_name"]
 
     async def reschedule(
-        self, clinic_id: UUID, *, appointment_id: UUID, new_slot_id: UUID, call_id: UUID
+        self,
+        clinic_id: UUID,
+        *,
+        appointment_id: UUID,
+        new_slot_id: UUID,
+        patient_msisdn: str,
+        call_id: UUID,
     ) -> tuple[UUID, datetime]:
         """Soft-versioned move. Writes a new row, points the old one at it.
 
@@ -365,14 +374,26 @@ class PostgresAdapter:
         against the row being replaced.
         """
         async with self._tenant_tx(clinic_id) as conn:
+            # Joined to patients and filtered on the VERIFIED caller's number.
+            # A correct appointment_id belonging to somebody else returns no row
+            # here, so a guessed or overheard id is worth nothing -- the failure
+            # is indistinguishable from "no such appointment", which is also the
+            # only thing safe to say back to the caller.
             old = await conn.fetchrow(
                 """
-                select id, patient_id, version
-                  from appointments
-                 where clinic_id = $1 and id = $2 and status = 'confirmed'
+                select a.id, a.patient_id, a.version
+                  from appointments a
+                  join patients p
+                    on p.id = a.patient_id
+                   and p.clinic_id = a.clinic_id
+                 where a.clinic_id = $1
+                   and a.id = $2
+                   and p.msisdn = $3
+                   and a.status = 'confirmed'
                 """,
                 clinic_id,
                 appointment_id,
+                patient_msisdn,
             )
             if old is None:
                 raise AppointmentNotFound("no confirmed appointment with that id")
@@ -437,22 +458,39 @@ class PostgresAdapter:
         return new_id, slot["starts_at"]
 
     async def cancel(
-        self, clinic_id: UUID, *, appointment_id: UUID, reason: str, call_id: UUID
+        self,
+        clinic_id: UUID,
+        *,
+        appointment_id: UUID,
+        reason: str,
+        patient_msisdn: str,
+        call_id: UUID,
     ) -> datetime:
-        """Soft-cancel. The row stays; only its status and timestamps move."""
+        """Soft-cancel. The row stays; only its status and timestamps move.
+
+        Scoped to the verified caller: cancelling someone else's appointment is
+        not refused, it simply matches no row.
+        """
         async with self._tenant_tx(clinic_id) as conn:
             cancelled_at = await conn.fetchval(
                 """
-                update appointments
+                update appointments a
                    set status        = 'cancelled',
                        cancel_reason = $3,
                        cancelled_at  = now()
-                 where clinic_id = $1 and id = $2 and status = 'confirmed'
-                returning cancelled_at
+                  from patients p
+                 where a.clinic_id = $1
+                   and a.id = $2
+                   and p.id = a.patient_id
+                   and p.clinic_id = a.clinic_id
+                   and p.msisdn = $4
+                   and a.status = 'confirmed'
+                returning a.cancelled_at
                 """,
                 clinic_id,
                 appointment_id,
                 reason,
+                patient_msisdn,
             )
 
         if cancelled_at is None:

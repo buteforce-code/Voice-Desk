@@ -41,6 +41,18 @@ class Tier(str, Enum):
 # v1 is India-only (see PROJECT.md). Widen this deliberately, with a country
 # field, if that ever changes -- do not relax it back to a permissive range.
 Msisdn = Annotated[str, Field(pattern=r"^(?:\+?91)?[6-9]\d{9}$")]
+
+
+def normalize_msisdn(value: str) -> str:
+    """Reduce an Indian mobile to its bare ten digits.
+
+    The pattern above accepts `+919876543210`, `919876543210` and
+    `9876543210` as the same subscriber, so any equality check between two
+    msisdns has to normalise first or it will reject the right caller for
+    saying their number a different way than the record stores it.
+    """
+    digits = value.removeprefix("+").removeprefix("91")
+    return digits
 IdempotencyKey = Annotated[str, Field(min_length=16, max_length=128)]
 
 
@@ -63,6 +75,26 @@ class ToolContext(Strict):
     dry_run: bool = True
     approval_token: str | None = None
     speculative: bool = False
+
+    identity_verified: bool = False
+    """Set by the state machine when the `identify` state completes a DOB
+    challenge against the patient record -- never by the model.
+
+    This used to be an `identity_verified: Literal[True]` field on the tool
+    INPUT schemas, which the model filled in. Since `Literal[True]` admits
+    exactly one value, the model always set it and validation always passed:
+    a control that could not fail is not a control. `bad_input-009` says so in
+    as many words -- "it does nothing whatsoever to stop a model from writing
+    True because the field demanded it" -- while `malicious-003` asserts the
+    opposite, that an unverified cancellation "is not expressible in the
+    schema". The eval set contradicted itself, and the pessimistic case was
+    the correct one.
+    """
+
+    verified_msisdn: str | None = None
+    """The number that actually passed the challenge. Identity-gated tools read
+    the subject from here rather than accepting one from the model, so
+    "whose appointments?" is not a question the model gets to answer."""
 
 
 class ToolResult(Strict):
@@ -133,13 +165,19 @@ class FindSlotsOut(Strict):
 
 
 class FindAppointmentsIn(Strict):
-    patient_msisdn: Msisdn
-    identity_verified: Literal[True]
-    """Reading a patient's bookings is reading their health data. Literal[True]
-    makes an unverified lookup inexpressible, exactly as on reschedule/cancel.
-    Without this the tool becomes a way to enumerate whether an arbitrary
-    number has appointments here."""
     include_past: bool = False
+    """Deliberately takes NO msisdn.
+
+    Reading a patient's bookings is reading their health data. When the model
+    supplied the number, this tool was an enumeration oracle -- "does
+    +9198xxxxxxx have appointments at this clinic" answerable for any number,
+    autonomously, at any point in the call. The docstring here used to claim
+    `identity_verified: Literal[True]` prevented exactly that. It could not:
+    the model set the flag itself and the only legal value was True.
+
+    The subject now comes from `ToolContext.verified_msisdn`. Enumeration is
+    not blocked, it is unsayable -- there is no field in which to name someone
+    else."""
 
 
 class AppointmentOut(Strict):
@@ -206,9 +244,11 @@ class ConfirmBookingOut(Strict):
 class RescheduleIn(Strict):
     appointment_id: UUID
     new_slot_id: UUID
-    identity_verified: Literal[True]
-    """Literal[True] makes 'I forgot to verify' a schema error, not a code path."""
     idempotency_key: IdempotencyKey
+    # Identity is not an argument. The registry refuses this tool unless
+    # ctx.identity_verified, and the adapter scopes the appointment lookup to
+    # ctx.verified_msisdn -- so an appointment belonging to someone else is not
+    # found rather than being found and then rejected.
 
 
 class RescheduleOut(Strict):
@@ -220,9 +260,9 @@ class RescheduleOut(Strict):
 
 class CancelIn(Strict):
     appointment_id: UUID
-    identity_verified: Literal[True]
     reason: Annotated[str, Field(max_length=200)]
     idempotency_key: IdempotencyKey
+    # See RescheduleIn: identity is server-side, not an argument.
 
 
 class CancelOut(Strict):

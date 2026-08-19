@@ -29,6 +29,11 @@ MIGRATIONS = REPO_ROOT / "db" / "migrations"
 CLINIC_A = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 CLINIC_B = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
+# Fictional numbers in the valid Indian mobile range. VERIFIED_MSISDN is the
+# caller who passed the DOB challenge; OTHER_MSISDN is anybody else.
+VERIFIED_MSISDN = "+919876543210"
+OTHER_MSISDN = "+919812345678"
+
 
 # --------------------------------------------------------------------------
 # Source access — several tests assert on files rather than behaviour, because
@@ -246,6 +251,8 @@ def make_ctx(
     dry_run: bool = True,
     speculative: bool = False,
     trace_id: str | None = None,
+    identity_verified: bool = False,
+    verified_msisdn: str | None = None,
 ) -> ToolContext:
     """Build a server-side context.
 
@@ -261,4 +268,18 @@ def make_ctx(
         dry_run=dry_run,
         approval_token=approval_token,
         speculative=speculative,
+        identity_verified=identity_verified,
+        verified_msisdn=verified_msisdn,
     )
+
+
+def verified_ctx(**kwargs: Any) -> ToolContext:
+    """A context that has passed the DOB challenge.
+
+    Used where a test means to exercise some OTHER gate. Without it the
+    identity check fires first and masks whatever was actually under test --
+    which is correct behaviour and useless as a test.
+    """
+    kwargs.setdefault("identity_verified", True)
+    kwargs.setdefault("verified_msisdn", VERIFIED_MSISDN)
+    return make_ctx(**kwargs)

@@ -22,7 +22,7 @@ from typing import Any, Protocol
 import structlog
 from pydantic import BaseModel, ValidationError
 
-from voicedesk.tools.schemas import Tier, ToolContext, ToolResult
+from voicedesk.tools.schemas import Tier, ToolContext, ToolResult, normalize_msisdn
 
 log = structlog.get_logger(__name__)
 
@@ -42,6 +42,22 @@ class SpeculationNotPermitted(ToolError):
 
 class NotAuthorized(ToolError):
     code = "not_authorized"
+
+
+class IdentityNotVerified(ToolError):
+    """The call never completed a DOB challenge, so there is no verified
+    subject to act on behalf of."""
+
+    code = "identity_not_verified"
+
+
+class IdentityMismatch(ToolError):
+    """The arguments name a different patient than the one who verified.
+    Should be unreachable -- no identity-gated tool accepts an msisdn -- but a
+    boundary that depends on a schema staying a certain shape is worth
+    asserting rather than assuming."""
+
+    code = "identity_mismatch"
 
 
 class RateLimited(ToolError):
@@ -77,6 +93,7 @@ class ToolSpec:
     handler: Handler
     side_effect_free: bool
     requires_idempotency: bool
+    requires_identity: bool
 
     @property
     def speculatable(self) -> bool:
@@ -106,6 +123,7 @@ class ToolRegistry:
         input_model: type[BaseModel],
         output_model: type[BaseModel],
         side_effect_free: bool,
+        requires_identity: bool = False,
     ) -> Callable[[Handler], Handler]:
         if tier is Tier.PROHIBITED:
             # Prohibited capabilities are enforced by not existing. If this
@@ -121,6 +139,7 @@ class ToolRegistry:
                 handler=fn,
                 side_effect_free=side_effect_free,
                 requires_idempotency=not side_effect_free,
+                requires_identity=requires_identity,
             )
             return fn
 
@@ -170,6 +189,7 @@ class ToolRegistry:
             # denies an unauthorized caller a validation-error oracle.
             authorized_by = self._authorize(ctx, spec)
             args = self._validate(spec, raw_args)
+            self._check_identity_binding(args, ctx, spec)
         except ToolError as exc:
             await self._audit.record(
                 ctx, name, _redact(raw_args), "rejected",
@@ -232,6 +252,16 @@ class ToolRegistry:
     def _authorize(self, ctx: ToolContext, spec: ToolSpec) -> str:
         """Server-side authorization. Derived from session state, never from
         anything the model produced."""
+        # Identity is checked before tier, and for every tier. find_appointments
+        # is AUTONOMOUS -- it needs no approval token and no particular state --
+        # so if this check lived inside the EXPLICIT_APPROVAL branch the one
+        # tool that actually leaks health data would skip it entirely.
+        if spec.requires_identity and not ctx.identity_verified:
+            raise IdentityNotVerified(
+                f"{spec.name} requires a verified caller; the identify state "
+                f"has not completed a successful challenge"
+            )
+
         if spec.tier is Tier.AUTONOMOUS:
             return "autonomous"
 
@@ -248,6 +278,30 @@ class ToolRegistry:
             return "caller_confirmation"
 
         raise NotAuthorized(f"{spec.name}: tier {spec.tier} has no approval path")
+
+    def _check_identity_binding(
+        self, args: BaseModel, ctx: ToolContext, spec: ToolSpec
+    ) -> None:
+        """An identity-gated tool may not name a subject other than the caller.
+
+        No current tool accepts an msisdn, so this never fires today. It exists
+        because the previous design's whole failure was that the subject came
+        from model output: if someone reintroduces such a field, it is bound to
+        the verified caller automatically rather than trusted.
+        """
+        if not spec.requires_identity:
+            return
+
+        supplied = getattr(args, "patient_msisdn", None)
+        if supplied is None:
+            return
+
+        if ctx.verified_msisdn is None or (
+            normalize_msisdn(supplied) != normalize_msisdn(ctx.verified_msisdn)
+        ):
+            raise IdentityMismatch(
+                f"{spec.name} was called for a number other than the verified caller"
+            )
 
     def _check_speculation(self, ctx: ToolContext, spec: ToolSpec) -> None:
         if ctx.speculative and not spec.speculatable:

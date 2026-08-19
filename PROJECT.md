@@ -224,13 +224,14 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
 The baseline needs a running pipeline, which needed a working adapter, which needed tenant
 isolation to actually exist. That chain is the subject of D11.
 
-## 6. Validators (G6) — 2 of 10 modules, both blocking in CI
+## 6. Validators (G6) — 3 of 10 modules, all blocking in CI
 
 | Module | State |
 |---|---|
-| `test_prohibited.py` | ✅ 82 tests. C12–C17 unreachable, approval boundary, speculation tiering, redaction, no real clinic name in the repo |
+| `test_prohibited.py` | ✅ 82 tests. C12–C17 unreachable, approval boundary, speculation tiering, redaction, no real clinic name in any tracked file |
 | `test_tenant_isolation.py` | ✅ 37 tests. Policy shape, fail-closed tenant function, adapter self-scoping, RLS-bypass refusal |
-| `test_slot_validity.py` · `test_double_booking.py` · `test_identity.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
+| `test_identity.py` | ✅ 23 tests. Identity is server-side, `find_appointments` takes no msisdn, writes bound to the verified caller in SQL, msisdn normalisation |
+| `test_slot_validity.py` · `test_double_booking.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
 
 Both existing modules run on a bare checkout — no database, no model, no telephony account. That
 is what lets them be gates rather than something skipped when the environment is inconvenient.
@@ -350,9 +351,54 @@ before running an eval. In both cases the artifact that catches defects is the o
 exist *first*, and in both cases the gate marked ✅ was marked so on its design document rather
 than on anything executable.
 
+### D12 — identity moved out of the tool arguments (2026-08-19)
+
+`identity_verified: Literal[True]` sat on `FindAppointmentsIn`, `RescheduleIn` and
+`CancelIn`. The model writes tool arguments; `Literal[True]` admits exactly one value. So the
+model always set it, validation always passed, and **nothing anywhere checked whether a challenge
+had happened.** The field appeared in three schemas and nowhere else in the codebase.
+
+It read as the strongest control in the system. Its own comment claimed it made "I forgot to
+verify" a schema error rather than a code path — but a model cannot forget a field with one legal
+value. It is the exact failure hard rule 6 names: *a model deciding it may call a tool is not
+authorization.*
+
+`find_appointments` is where it mattered. AUTONOMOUS tier — no approval token, no required state —
+with the phone number supplied by the model. Its docstring said the flag stopped the tool becoming
+"a way to enumerate whether an arbitrary number has appointments here." That is precisely what it
+was. `reschedule` and `cancel` were partly covered by the EXPLICIT_APPROVAL tier, which proves the
+caller *confirmed*, not that they *are who they claim*.
+
+**The eval set had already found this, and disagreed with itself.** `bad_input-009`: "it does
+nothing whatsoever to stop a model from writing True because the field demanded it. That gap is
+what this case measures." `malicious-003`: "an unverified cancellation is not expressible in the
+schema — the tool call cannot be constructed." Two cases, opposite claims, both shipped. Nothing
+reconciles two author notes, which is worth remembering now that case authoring is the main way
+defects get found here.
+
+The fix, in three layers so that losing one does not lose the property:
+
+- `ToolContext.identity_verified` and `verified_msisdn`, set by the state machine at `identify`.
+  The context is frozen, so a handler cannot verify itself.
+- `ToolSpec.requires_identity`, checked in `_authorize` **before** the tier branch — inside it,
+  the one AUTONOMOUS tool that leaks health data would have skipped the check.
+- `FindAppointmentsIn` takes no msisdn at all, and the adapter joins `reschedule`/`cancel` to
+  `patients.msisdn`. Someone else's `appointment_id` returns no row rather than being found and
+  refused, so a guessed id is worth nothing and both failures look identical to the caller.
+
+`confirm_booking` deliberately does **not** require prior identity: a first-time caller booking
+their own appointment has no record to be verified against. Reading or changing an *existing*
+booking is the act that reaches another patient's data.
+
+Also added `bad_input-010`: a caller offering an Aadhaar number as proof of identity. The
+Aadhaar redaction pattern had been in `fencing.py` since G4 with no case exercising it and no
+written rationale — the question "why do we have an Aadhaar number in the first place" is what
+led to all of the above.
+
 ---
 
 ## Log
 
 - **2026-08-16** — G0 scaffold. G1 and G2 written. D1–D4 recorded.
+- **2026-08-19** — Identity moved from tool arguments to `ToolContext` (D12); `find_appointments` was an enumeration oracle. `test_identity.py` + `bad_input-010`. Repo pushed to a private GitHub remote and **CI ran for the first time** — it had never executed: no remote, and a branch filter matching `main` when the branch is `master`. Real hospital name scrubbed from PROJECT.md.
 - **2026-08-17** — Repo audited against its own claims. RLS policies written (`0002`), `PostgresAdapter` built, first two G6 validator modules landed (119 tests, blocking in CI). Six defects found and fixed; D11 records them. Docs resynced: eight tools, not six.

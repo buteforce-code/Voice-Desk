@@ -94,16 +94,35 @@ class SchedulingAdapter(Protocol):
         ...
 
     async def reschedule(
-        self, clinic_id: UUID, *, appointment_id: UUID, new_slot_id: UUID, call_id: UUID
+        self,
+        clinic_id: UUID,
+        *,
+        appointment_id: UUID,
+        new_slot_id: UUID,
+        patient_msisdn: str,
+        call_id: UUID,
     ) -> tuple[UUID, datetime]:
         """Soft-versioned: writes a new row, sets superseded_by on the old.
-        Returns (new_appointment_id, starts_at). Never overwrites."""
+        Returns (new_appointment_id, starts_at). Never overwrites.
+
+        `patient_msisdn` is the verified caller, from ToolContext. The lookup
+        must be scoped by it: an appointment_id belonging to a different patient
+        must come back as not-found, so that guessing an id gains nothing.
+        """
         ...
 
     async def cancel(
-        self, clinic_id: UUID, *, appointment_id: UUID, reason: str, call_id: UUID
+        self,
+        clinic_id: UUID,
+        *,
+        appointment_id: UUID,
+        reason: str,
+        patient_msisdn: str,
+        call_id: UUID,
     ) -> datetime:
-        """Soft-cancel. Returns cancelled_at. Never deletes."""
+        """Soft-cancel. Returns cancelled_at. Never deletes.
+
+        Scoped to the verified caller, exactly as `reschedule`."""
         ...
 
     async def undo(self, clinic_id: UUID, *, appointment_id: UUID) -> None:
