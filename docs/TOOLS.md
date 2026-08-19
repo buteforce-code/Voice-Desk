@@ -75,4 +75,4 @@ No tool exists for outbound calls (C12), clinical advice (C13), results or presc
 
 Not "a tool that refuses" — **no tool.** Unknown tool names still produce a rejected audit row, so an attempt is visible without a code path existing.
 
-`tests/test_prohibited.py` asserts this as a **blocking CI job** — genuinely blocking as of 2026-08-17, when the tests were written and `continue-on-error` came off the step.
+`tests/test_prohibited.py` asserts this. The CI job is configured to block as of 2026-08-17 (`continue-on-error` came off the step), but **the repo has no git remote, so CI has never run at all.** Until it is pushed somewhere that executes workflows, the suite is a local command and the standard's "if the suite is not in CI, it does not exist" applies in full.

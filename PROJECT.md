@@ -334,10 +334,15 @@ reading would have:
   Each would have failed at runtime, not at deploy.
 - **`CancelOut.cancelled_at` had no column to come from**, and `cancel_reason` had no update grant.
 
-The CI job asserting the prohibited row had also been failing since G4: its grep matched
+The CI job asserting the prohibited row *would* have failed since G4: its grep matched
 `_PROHIBITED_BY_ABSENCE`, the frozenset that lists the forbidden call names so they can be checked
 for. A guard that fires on its own guard list is a guard someone disables. It now matches call
 sites only, and `continue-on-error` is off every step that guards a real control.
+
+**It would have failed, not did: the repo has no git remote and CI has never executed.** Every
+"blocking CI job" claim in this document describes configuration, not observed behaviour, until
+the repo is pushed to a host that runs workflows. That is a live gap, not a footnote — G5 and G6
+both rest on the suite running on every change.
 
 **The lesson is the one G5 already taught in D9, arriving from the other side.** D9 found ten
 defects by writing eval cases before committing a baseline. This found six by writing validators
