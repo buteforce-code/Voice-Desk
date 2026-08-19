@@ -304,20 +304,26 @@ def test_no_grant_references_a_clinical_table() -> None:
 )
 @pytest.mark.parametrize(
     "state",
-    ["intake", "identify", "research", "draft", "validate", "repair", "execute", "wrap"],
+    ["intake", "identify", "research", "draft", "validate", "repair", "approval", "wrap"],
 )
-async def test_write_is_unreachable_outside_approval_state(
+async def test_write_is_unreachable_outside_execute_state(
     registry, audit, tool: str, state: str
 ) -> None:
-    """`execute` is reachable only from `approval`. Note that state 'execute'
-    is included above: reaching the execute state does not re-authorize the
-    write, because the token is checked, not the label.
+    """Writes happen in `execute`, which has exactly one inbound edge, from
+    `approval` (state.py asserts that at import time). See PROJECT.md D13.
 
-    The caller is already identity-verified here so that the APPROVAL gate is
-    what fails. Without that, the identity gate refuses first and this test
-    would pass while proving nothing about approval.
+    Two things are deliberately arranged so this fails on the STATE and nothing
+    else: the caller is identity-verified, and a valid approval token is
+    present. Without both, the identity gate or the token check refuses first
+    and the test passes while proving nothing about state -- which is exactly
+    what happened when the write state moved from `approval` to `execute` and
+    all of these kept passing for the wrong reason.
+
+    `approval` itself is in the list: holding a token is not permission to
+    write, it is permission to enter `execute`.
     """
-    result = await registry.invoke(tool, {}, verified_ctx(state=state))
+    ctx = verified_ctx(state=state, approval_token="minted-at-approval")  # noqa: S106
+    result = await registry.invoke(tool, {}, ctx)
 
     assert result.ok is False
     assert result.error_code == "not_authorized"
@@ -331,14 +337,42 @@ async def test_write_is_unreachable_outside_approval_state(
 async def test_write_is_unreachable_without_an_approval_token(
     registry, tool: str
 ) -> None:
-    """Being in the approval state is not enough. The token is issued by the
-    state machine, and the model has no way to mint one."""
+    """Reaching `execute` is not enough on its own. The token is minted by the
+    state machine on entering `approval`, and the model has no way to mint one.
+
+    The state is correct here, so the TOKEN is what fails."""
     result = await registry.invoke(
-        tool, {}, verified_ctx(state="approval", approval_token=None)
+        tool, {}, verified_ctx(state="execute", approval_token=None)
     )
 
     assert result.ok is False
     assert result.error_code == "not_authorized"
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["confirm_booking", "reschedule_appointment", "cancel_appointment"],
+)
+async def test_a_write_is_authorized_with_the_right_state_and_token(
+    registry, tool: str
+) -> None:
+    """The positive control the two tests above need.
+
+    Without it both could pass vacuously -- a registry that refused every write
+    unconditionally would satisfy them and fail the product. This asserts the
+    refusals above are about state and token specifically, not about writes
+    being impossible.
+
+    Arguments are still empty, so this stops at schema validation. That is the
+    point: reaching `invalid_arguments` proves authorization was passed.
+    """
+    ctx = verified_ctx(state="execute", approval_token="minted-at-approval")  # noqa: S106
+    result = await registry.invoke(tool, {}, ctx)
+
+    assert result.error_code == "invalid_arguments", (
+        f"expected to get past authorization and fail on arguments, "
+        f"got {result.error_code}"
+    )
 
 
 async def test_authorization_ignores_arguments_supplied_by_the_model(registry) -> None:

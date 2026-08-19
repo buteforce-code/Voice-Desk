@@ -266,15 +266,26 @@ class ToolRegistry:
             return "autonomous"
 
         if spec.tier is Tier.EXPLICIT_APPROVAL:
-            # The single most important invariant in the system: a write is
-            # reachable only from the approval state, with a token the state
-            # machine issued.
-            if ctx.state != "approval":
+            # A write happens in `execute`, and `execute` has exactly one
+            # inbound edge, from `approval` -- asserted at import time in
+            # state.py, not merely reviewed.
+            #
+            # This previously authorized on state == "approval". That reading
+            # made the invariant docs/STATE_MACHINE.md calls "the single most
+            # important in the system" decorative: if the write already
+            # happened during approval, it no longer matters what `execute` is
+            # reachable from. Requiring `execute` makes BOTH the state graph
+            # and the token load-bearing -- the token proves the caller
+            # confirmed, and the graph proves the confirmation came first.
+            # See PROJECT.md D13.
+            if ctx.state != "execute":
                 raise NotAuthorized(
-                    f"{spec.name} requires state 'approval', got '{ctx.state}'"
+                    f"{spec.name} requires state 'execute', got '{ctx.state}'"
                 )
             if not ctx.approval_token:
-                raise NotAuthorized(f"{spec.name} requires an approval token")
+                raise NotAuthorized(
+                    f"{spec.name} requires an approval token minted at approval"
+                )
             return "caller_confirmation"
 
         raise NotAuthorized(f"{spec.name}: tier {spec.tier} has no approval path")

@@ -145,11 +145,11 @@ One person holds all four today. Written down anyway, per G2.
 
 | Requirement | Artifact |
 |---|---|
-| States enumerated and stored in the database, not inferred | `docs/STATE_MACHINE.md` · `db/migrations/0001_init.sql` (`call_state` enum, `calls.state`, append-only `call_state_transitions`) |
+| States enumerated and stored in the database, not inferred | `docs/STATE_MACHINE.md` · `db/migrations/0001_init.sql` (`call_state` enum, `calls.state`, append-only `call_state_transitions`) · **implemented** in `state.py` from 2026-08-19 |
 | UI shows current step · sources · draft-vs-final diff · uncertainty · approve/reject/edit/retry/undo · full history | `docs/DASHBOARD_UX.md` §G3 required elements |
 | Undo exists for every reversible executed action before that action ships | `docs/STATE_MACHINE.md` §Undo. Enforced structurally by soft-versioning (`supersedes` / `superseded_by`) and no DELETE grant |
 
-Key invariant: **`execute` is reachable only from `approval`.** No other edge exists in the machine.
+Key invariant: **`execute` is reachable only from `approval`.** No other edge exists in the machine. Asserted over the edge table, at import time in `state.py`, and by the registry — see D13.
 
 Prompts may now be written. Not before.
 
@@ -224,7 +224,7 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
 The baseline needs a running pipeline, which needed a working adapter, which needed tenant
 isolation to actually exist. That chain is the subject of D11.
 
-## 6. Validators (G6) — 4 modules, 200 tests, all blocking in CI
+## 6. Validators (G6) — 5 modules, 259 tests, all blocking in CI
 
 | Module | State |
 |---|---|
@@ -232,6 +232,7 @@ isolation to actually exist. That chain is the subject of D11.
 | `test_tenant_isolation.py` | ✅ 37 tests. Policy shape, fail-closed tenant function, adapter self-scoping, RLS-bypass refusal |
 | `test_identity.py` | ✅ 23 tests. Identity is server-side, `find_appointments` takes no msisdn, writes bound to the verified caller in SQL, msisdn normalisation |
 | `test_config.py` | ✅ 58 tests. Startup validation, secret redaction, and the demo tenant the eval suite references |
+| `test_state_machine.py` | ✅ 56 tests. Edge table, SQL/Python enum parity, approval-token lifecycle, 3-attempt identity cap, bounded repair |
 | `test_slot_validity.py` · `test_double_booking.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
 
 Both existing modules run on a bare checkout — no database, no model, no telephony account. That
@@ -396,11 +397,60 @@ Aadhaar redaction pattern had been in `fencing.py` since G4 with no case exercis
 written rationale — the question "why do we have an Aadhaar number in the first place" is what
 led to all of the above.
 
+### D13 — the write happens in `execute`, not `approval` (2026-08-19)
+
+Implementing the state machine surfaced a contradiction between two G3 artifacts that had
+coexisted since they were written.
+
+`docs/STATE_MACHINE.md` says the spine is `… → approval → execute → audit`, that `execute` is where
+"the single authorized write happens", and that **"`execute` is reachable only from `approval`. No
+other edge exists. This is the single most important invariant in the system."**
+
+`registry.py` authorized `EXPLICIT_APPROVAL` tools when `ctx.state == "approval"`.
+
+Both cannot be true. And the registry's reading quietly voided the invariant it cited: **if the
+write already happened during `approval`, it no longer matters what `execute` is reachable from.**
+The most important invariant in the system was decorative — a state the machine passed through
+after the only thing worth guarding had already occurred.
+
+Now: `EXPLICIT_APPROVAL` requires `ctx.state == "execute"` *and* an approval token. `execute` has
+exactly one inbound edge, asserted over the edge table itself and again at import time in
+`state.py`, so a shortcut stops the process from starting rather than waiting to be noticed in
+review. The token is minted on entering `approval` and cleared on leaving `execute`, so it cannot
+be carried into a later turn and reused.
+
+That makes both mechanisms load-bearing: **the token proves the caller confirmed, and the graph
+proves the confirmation came first.** Strictly stronger than either alone.
+
+**Three tests kept passing across this change while testing nothing.** `test_write_is_unreachable_
+outside_approval_state` parametrised over states including `execute` and expected refusal — after
+the change it still refused, but on the missing token rather than the state. Same for the
+token test, which was in `approval` and now failed on state. Both were green, both were vacuous.
+They now arrange the *other* gate to pass so the one under test is what fails, and a positive
+control asserts a correctly-staged write gets through authorization — without it, a registry that
+refused every write unconditionally would satisfy the whole file.
+
+The pattern is the same one D9 and D12 found from different directions: a green test is evidence
+only if you know what would make it red.
+
+### D14 — nothing had ever constructed a `ToolContext` (2026-08-19)
+
+D12 moved identity onto `ToolContext` and said the state machine would set it. There was no state
+machine, and `ToolContext` appeared exactly once in `src/` — its own class definition. Nothing
+built one, so `identity_verified` could never become true and `find_appointments`,
+`reschedule_appointment` and `cancel_appointment` were unreachable in production code.
+
+Not a live regression, because no pipeline runs yet. But it is the shape of gap worth naming: a
+control was moved to a safer home in a commit that could not wire the new home up, and the tests
+covering it all passed because they construct contexts directly. `state.py` closes it — and
+`CallSession.tool_context()` is now the only thing in `src/` that builds one.
+
 ---
 
 ## Log
 
 - **2026-08-16** — G0 scaffold. G1 and G2 written. D1–D4 recorded.
+- **2026-08-19** — State machine implemented (`state.py`): edge table, approval-token lifecycle, 3-attempt identity cap, bounded repair. Resolved a G3 contradiction — the write now happens in `execute`, not `approval` (D13) — and closed the gap where nothing could construct a `ToolContext` at all (D14).
 - **2026-08-19** — Config layer: `config.py` reads and validates the environment (nothing had read `.env` at all), `tenants.py` loads clinic config from disk, and `config/tenants/meridian.yaml` defines the demo tenant all 58 eval cases referenced and which existed nowhere. Rules that lived only in prose — Vertex AI blocked, Mumbai residency, call ceiling inside Railway's connection limit — are now startup failures.
 - **2026-08-19** — Identity moved from tool arguments to `ToolContext` (D12); `find_appointments` was an enumeration oracle. `test_identity.py` + `bad_input-010`. Repo pushed to a private GitHub remote and **CI ran for the first time** — it had never executed: no remote, and a branch filter matching `main` when the branch is `master`. Real hospital name scrubbed from PROJECT.md.
 - **2026-08-17** — Repo audited against its own claims. RLS policies written (`0002`), `PostgresAdapter` built, first two G6 validator modules landed (119 tests, blocking in CI). Six defects found and fixed; D11 records them. Docs resynced: eight tools, not six.

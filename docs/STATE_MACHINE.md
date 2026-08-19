@@ -36,6 +36,7 @@ intake → research → draft → validate → approval → execute → audit
 
 1. **Forward only**, except `validate → repair → validate` (max one repair loop) and lateral moves to `transfer` / `abandoned` / `failed` / `refused`.
 2. **`execute` is reachable only from `approval`.** No other edge exists. This is the single most important invariant in the system.
+   Implemented in `state.py`: asserted over the edge table, again at import time (so a shortcut stops the process from starting), and enforced by `registry._authorize`, which requires `state == execute` **plus** the approval token. Requiring only the token would leave the graph decorative; requiring only the state would let any path in. See PROJECT.md D13.
 3. **`draft` never writes.** A draft is a struct in memory plus a row in `call_turns`. If the call drops in `draft`, nothing happened.
 4. **Slot holds are not bookings.** `research` may place a short TTL hold to prevent a race; the hold expires on its own and is released on `abandoned` / `failed`.
 5. **Every transition records** `from_state`, `to_state`, `reason`, `at`, and the prompt/model/tool versions in force.
