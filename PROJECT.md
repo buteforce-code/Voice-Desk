@@ -5,7 +5,7 @@
 > **G6 started early, out of order, and deliberately: see D11.**
 > **Rollout stage: pre-offline-eval.** Nothing is deployed. Nothing may call a real patient.
 
-**No clinic is engaged.** This is a portfolio build. Sitapati Clinic and Hospital (Royapettah, Chennai) is a *target prospect profile* used to keep requirements honest — no contact has been made and no relationship exists. See D5.
+**No clinic is engaged.** This is a portfolio build. A *target prospect profile* is used to keep requirements honest — no contact has been made and no relationship exists. The prospect is named only in the private vault note (`.agents/knowledge/voice_desk.md`), never in this repo. See D5.
 
 Demo tenant is **fictional** (`Meridian Speciality Clinic`). Product shape: single-tenant-shaped, multi-tenant-ready.
 
@@ -269,7 +269,7 @@ Accepted with two caveats, both recorded in §2.4: no India region (Singapore is
 
 ### D5 — No clinic is engaged. The demo tenant is fictional (2026-08-16)
 
-Sitapati Clinic and Hospital is a **real organisation that has not been contacted.** It is used only as a private target-prospect profile to keep requirements grounded.
+The target prospect is a **real organisation that has not been contacted.** It is used only as a private profile to keep requirements grounded, and it is named only in the vault — not here, not in code, not in a test fixture.
 
 Every public artifact — demo, replay page, screenshots, case study — uses a **fictional clinic** (`Meridian Speciality Clinic`) with fictional doctors and fictional slots. No real hospital's name, branding, phone number or doctor roster appears in anything shippable.
 
@@ -278,7 +278,7 @@ Two reasons, and the first is sufficient on its own:
 1. A public demo branded as a real named hospital's booking line implies a working relationship and an endorsement that do not exist, and would put a real clinic's name on an unreviewed clinical-boundary system. Not shippable at any quality bar.
 2. It is what the project was asked for anyway: a **white-label blueprint** that copies to any clinic in any market. Hard-binding the demo to one hospital is the thing that would stop it being reusable.
 
-Sitapati stays in the private vault note as a prospect. If they later become a real design partner, that is a config file and a signed clinical review, not a rebuild.
+The prospect stays in the private vault note. If they later become a real design partner, that is a config file and a signed clinical review, not a rebuild.
 
 ### D6 — Telephony: Plivo (2026-08-16)
 

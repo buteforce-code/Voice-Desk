@@ -14,11 +14,15 @@ a control, and neither is a handler that refuses.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from conftest import (
     CLINIC_A,
     CLINIC_B,
+    REPO_ROOT,
     called_names,
     make_ctx,
     migration_sql,
@@ -400,16 +404,40 @@ def test_transcript_column_stores_redacted_text_only() -> None:
 # ==========================================================================
 
 
-def test_no_real_clinic_name_appears_in_source_or_schema() -> None:
-    """D5: Sitapati is a private prospect profile. It must not appear in
-    anything shippable, and the demo tenant is fictional."""
-    haystack = migration_sql().lower() + "".join(
-        p.read_text(encoding="utf-8").lower() for p in source_files()
+def test_no_real_clinic_name_appears_in_any_tracked_file() -> None:
+    """D5: the target prospect is a real, uncontacted organisation. It is named
+    only in the private vault note, never in this repo.
+
+    This originally scanned `src/` and the migrations only -- and PROJECT.md
+    named the hospital three times, in the very decision record explaining that
+    the name stays private. The gap was found when the repo was about to be
+    pushed to a public remote. Scan everything git tracks, because "shippable"
+    means the repository, not the Python package.
+    """
+    git = shutil.which("git")
+    assert git, "git is required to enumerate tracked files"
+    tracked = subprocess.run(  # noqa: S603 - resolved path, literal argv, no shell
+        [git, "ls-files"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split()
+
+    offenders = []
+    for rel in tracked:
+        path = REPO_ROOT / rel
+        if path.name == Path(__file__).name or not path.is_file():
+            continue  # this file names them in order to forbid them
+        try:
+            body = path.read_text(encoding="utf-8").lower()
+        except UnicodeDecodeError:
+            continue
+        for forbidden in ("sitapati", "royapettah"):
+            if forbidden in body:
+                offenders.append(f"{rel} contains '{forbidden}'")
+
+    assert not offenders, (
+        "a real organisation is named in a tracked file and must stay out of "
+        f"the repo: {offenders}"
     )
-    for forbidden in ("sitapati", "royapettah"):
-        assert forbidden not in haystack, (
-            f"'{forbidden}' is a real organisation and must stay out of the repo"
-        )
 
 
 def test_clinic_id_is_on_every_tenant_table() -> None:
