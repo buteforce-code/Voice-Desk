@@ -25,9 +25,21 @@ demonstration of the controls, not of the agent's judgement. Wiring Gemini in
 place of the script is the next step, and the first that needs a key.
 
 ```bash
-uv run pytest tests/ -q          # 351 tests, no secrets required
+uv run pytest tests/ -q          # 386 tests, no secrets required
 uv run python -m evals.run --validate
 ```
+
+## Talk to it
+
+One key — `GOOGLE_AI_API_KEY` in `.env`. No database, no telephony.
+
+```bash
+uv run python -m voicedesk.chat --trace --audit
+```
+
+Real Gemini, real tool calling, real state machine, real clinical guard, real
+audit trail. You type instead of talking; STT and TTS sit on either end of
+exactly this loop, which is why it is the cheapest place to find a booking bug.
 
 
 ## Why this exists
