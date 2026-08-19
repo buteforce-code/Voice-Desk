@@ -6,6 +6,30 @@ Nothing else. No outbound calls. No clinical advice.
 
 ---
 
+## Try it locally
+
+No API keys, no database, no telephony:
+
+```bash
+uv sync --all-extras --dev
+uv run python -m voicedesk.console
+```
+
+Walks a booking end to end, then shows what happens when a write is attempted
+from the wrong state, when someone asks for another patient's appointments,
+when the caller asks for medical advice in English and Hindi, when identity
+fails three times, and what the audit log recorded for all of it.
+
+Every path is **scripted** — there is no model in the loop. That makes it a
+demonstration of the controls, not of the agent's judgement. Wiring Gemini in
+place of the script is the next step, and the first that needs a key.
+
+```bash
+uv run pytest tests/ -q          # 351 tests, no secrets required
+uv run python -m evals.run --validate
+```
+
+
 ## Why this exists
 
 Indian clinics lose **22–38% of patient leads** to missed calls. Mid-size hospitals miss **30–40%** of calls at peak. About a third of new patients who hit voicemail hang up and dial the next provider.

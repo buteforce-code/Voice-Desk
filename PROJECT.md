@@ -224,7 +224,7 @@ Added as AUTONOMOUS / side-effect-free, with `identity_verified: Literal[True]` 
 The baseline needs a running pipeline, which needed a working adapter, which needed tenant
 isolation to actually exist. That chain is the subject of D11.
 
-## 6. Validators (G6) — 6 modules, 321 tests, all blocking in CI
+## 6. Validators (G6) — 7 modules, 351 tests, all blocking in CI
 
 | Module | State |
 |---|---|
@@ -234,7 +234,8 @@ isolation to actually exist. That chain is the subject of D11.
 | `test_config.py` | ✅ 58 tests. Startup validation, secret redaction, and the demo tenant the eval suite references |
 | `test_state_machine.py` | ✅ 56 tests. Edge table, SQL/Python enum parity, approval-token lifecycle, 3-attempt identity cap, bounded repair |
 | `test_clinical_guard.py` | ✅ 62 tests. C13/C14 output classifier — advice, triage in both directions, symptom interpretation, results, dosage; ta/hi/en parity; grounded config exempt. **Blocking job** |
-| `test_slot_validity.py` · `test_double_booking.py` · `test_consent.py` · `test_clinical_guard.py` · `test_injection.py` · `test_redaction.py` · `test_undo.py` | not started |
+| `test_booking_rules.py` | ✅ 28 tests. Covers the planned `test_slot_validity` · `test_double_booking` · `test_undo` — one subject, one fixture. Asserts the in-memory and Postgres adapters agree |
+| `test_consent.py` · `test_injection.py` · `test_redaction.py` | not started |
 
 Both existing modules run on a bare checkout — no database, no model, no telephony account. That
 is what lets them be gates rather than something skipped when the environment is inconvenient.
@@ -248,6 +249,12 @@ is what lets them be gates rather than something skipped when the environment is
 ```
 
 Current stage: **pre-offline-eval.** Evidence required to promote: a populated `evals/` set with a committed baseline. Cases are populated and conformant; the baseline is the one missing artifact.
+
+### What can be exercised today
+
+`python -m voicedesk.console` walks a booking end to end and then demonstrates each refusal — wrong-state write, enumeration attempt, clinical advice in two languages, identity exhaustion, undo — with the audit rows for all of it. **No API key, no database, no telephony.**
+
+Every path in it is scripted. That makes it a demonstration of the *controls*, not of the agent's judgement, and the distinction is the whole reason a baseline still cannot be produced: nothing has yet decided anything. `InMemoryAdapter` is what removes the database from the critical path, so the only remaining blocker for a first real conversation is the model itself.
 
 ---
 
