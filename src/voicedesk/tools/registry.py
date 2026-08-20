@@ -94,6 +94,10 @@ class ToolSpec:
     side_effect_free: bool
     requires_idempotency: bool
     requires_identity: bool
+    description: str = ""
+    """What the tool does, in the model's words. Sent with the function
+    declaration -- without it the model picks tools by guessing from their
+    names."""
 
     @property
     def speculatable(self) -> bool:
@@ -124,6 +128,7 @@ class ToolRegistry:
         output_model: type[BaseModel],
         side_effect_free: bool,
         requires_identity: bool = False,
+        description: str = "",
     ) -> Callable[[Handler], Handler]:
         if tier is Tier.PROHIBITED:
             # Prohibited capabilities are enforced by not existing. If this
@@ -140,6 +145,7 @@ class ToolRegistry:
                 side_effect_free=side_effect_free,
                 requires_idempotency=not side_effect_free,
                 requires_identity=requires_identity,
+                description=description,
             )
             return fn
 
@@ -151,6 +157,7 @@ class ToolRegistry:
         return [
             {
                 "name": spec.name,
+                "description": spec.description,
                 "parameters": spec.input_model.model_json_schema(),
             }
             for spec in self._tools.values()

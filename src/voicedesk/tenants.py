@@ -78,8 +78,9 @@ class Tenant:
         return tuple(sorted({d.specialty for d in self.doctors if d.active}))
 
 
-def load_tenant(path: Path) -> Tenant:
+def load_tenant(path: Path | str) -> Tenant:
     """Read and validate one tenant file."""
+    path = Path(path)
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -137,8 +138,14 @@ def load_tenant(path: Path) -> Tenant:
     return tenant
 
 
-def load_tenants(directory: Path) -> dict[str, Tenant]:
-    """Load every tenant file in a directory, keyed by slug."""
+def load_tenants(directory: Path | str) -> dict[str, Tenant]:
+    """Load every tenant file in a directory, keyed by slug.
+
+    Accepts a str because TENANT_CONFIG_PATH arrives as one from the
+    environment, and an AttributeError three frames down is a poor way to learn
+    that a path needed wrapping.
+    """
+    directory = Path(directory)
     if not directory.is_dir():
         raise TenantConfigError(
             f"{directory} does not exist. TENANT_CONFIG_PATH must point at a "

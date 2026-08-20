@@ -515,6 +515,62 @@ def test_transcript_column_stores_redacted_text_only() -> None:
 
 
 # ==========================================================================
+# No credential may live in a tracked file
+# ==========================================================================
+
+
+_PLACEHOLDER_OK = (
+    # Non-secret defaults that legitimately carry a value in the template.
+    "SARVAM_STT_MODEL", "SARVAM_TTS_MODEL", "SARVAM_DEFAULT_LANGUAGE",
+    "GEMINI_MODEL", "GOOGLE_GENAI_USE_VERTEXAI", "TELEPHONY_PROVIDER",
+    "SUPABASE_REGION", "TENANT_CONFIG_PATH", "CONSENT_STORE", "LOG_LEVEL",
+    "DATABASE_DSN",  # documented as a shape, not a credential
+)
+
+
+def test_no_secret_has_a_value_in_the_env_template() -> None:
+    """`.env.example` is TRACKED. A key typed into it is a key pushed to the
+    remote on the next commit.
+
+    This is a natural mistake and it nearly happened: the file is the one that
+    lists every variable, it is what an editor opens when you go looking for
+    where the key goes, and `.env` does not exist until you create it. The
+    template must stay all-blank so that filling it in is obviously the wrong
+    file.
+    """
+    template = REPO_ROOT / ".env.example"
+    assert template.is_file()
+
+    offenders = []
+    for line in template.read_text(encoding="utf-8").splitlines():
+        if "=" not in line or line.strip().startswith("#"):
+            continue
+        name, _, value = line.partition("=")
+        name, value = name.strip(), value.strip()
+        if not value or name in _PLACEHOLDER_OK:
+            continue
+        if name.endswith(("_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_SID", "_AUTH_ID")):
+            offenders.append(name)
+
+    assert not offenders, (
+        f"{offenders} carry a value in .env.example, which is tracked and "
+        f"pushed. Put real values in .env — it is gitignored, and it is the "
+        f"only file Settings.load() reads."
+    )
+
+
+def test_the_real_env_file_is_ignored() -> None:
+    """The other half. A template that stays blank is no help if `.env` is
+    committable."""
+    ignore = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
+    lines = {line.strip() for line in ignore.splitlines()}
+    assert ".env" in lines
+    assert "!.env.example" in lines, (
+        "the template must stay tracked, or nobody knows which variables exist"
+    )
+
+
+# ==========================================================================
 # Tenant identity is never hardcoded (PROJECT.md hard rule 8)
 # ==========================================================================
 

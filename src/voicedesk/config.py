@@ -158,7 +158,7 @@ class Settings:
 
     # -- reasoning --------------------------------------------------------
     google_ai_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
     use_vertex_ai: bool = False
 
     # -- data -------------------------------------------------------------
@@ -194,7 +194,7 @@ class Settings:
             sarvam_tts_model=_env("SARVAM_TTS_MODEL") or "bulbul:v3",
             sarvam_default_language=_env("SARVAM_DEFAULT_LANGUAGE") or "ta-IN",
             google_ai_api_key=_env("GOOGLE_AI_API_KEY"),
-            gemini_model=_env("GEMINI_MODEL") or "gemini-2.5-flash",
+            gemini_model=_env("GEMINI_MODEL") or "gemini-3.6-flash",
             use_vertex_ai=_bool("GOOGLE_GENAI_USE_VERTEXAI", False),
             database_dsn=_env("DATABASE_DSN") or _env("SUPABASE_DB_DSN"),
             supabase_region=_env("SUPABASE_REGION") or REQUIRED_SUPABASE_REGION,

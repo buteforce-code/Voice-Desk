@@ -78,6 +78,11 @@ def register_scheduling_tools(
 
     @registry.register(
         "get_clinic_info",
+        description=(
+            "Look up a fact about this clinic: opening hours, address, consultation fee, "
+            "specialties offered, doctors, preparation instructions, or languages spoken. Use this "
+            "for ANY factual claim about the clinic — never answer from memory."
+        ),
         tier=Tier.AUTONOMOUS,
         input_model=GetClinicInfoIn,
         output_model=GetClinicInfoOut,
@@ -91,6 +96,10 @@ def register_scheduling_tools(
 
     @registry.register(
         "find_slots",
+        description=(
+            "Find available appointment times. Filter by specialty or by a specific doctor. Only "
+            "times returned by this tool may be offered to the caller."
+        ),
         tier=Tier.AUTONOMOUS,
         input_model=FindSlotsIn,
         output_model=FindSlotsOut,
@@ -111,6 +120,11 @@ def register_scheduling_tools(
 
     @registry.register(
         "find_appointments",
+        description=(
+            "List the CALLER'S OWN existing confirmed appointments. Requires a verified caller; it "
+            "takes no phone number, because it can only ever return the appointments of the person "
+            "on the line."
+        ),
         tier=Tier.AUTONOMOUS,
         input_model=FindAppointmentsIn,
         output_model=FindAppointmentsOut,
@@ -139,6 +153,10 @@ def register_scheduling_tools(
 
     @registry.register(
         "hold_slot",
+        description=(
+            "Reserve a slot for a couple of minutes while the caller decides. This is not a "
+            "booking and must never be described to the caller as one."
+        ),
         tier=Tier.AUTONOMOUS,
         input_model=HoldSlotIn,
         output_model=HoldSlotOut,
@@ -156,6 +174,10 @@ def register_scheduling_tools(
 
     @registry.register(
         "confirm_booking",
+        description=(
+            "Create a new appointment in the clinic's register. Only call this after the caller "
+            "has explicitly agreed to a specific time you offered."
+        ),
         tier=Tier.EXPLICIT_APPROVAL,
         input_model=ConfirmBookingIn,
         output_model=ConfirmBookingOut,
@@ -184,6 +206,10 @@ def register_scheduling_tools(
 
     @registry.register(
         "reschedule_appointment",
+        description=(
+            "Move one of the caller's existing appointments to a different slot. Requires a "
+            "verified caller."
+        ),
         tier=Tier.EXPLICIT_APPROVAL,
         input_model=RescheduleIn,
         output_model=RescheduleOut,
@@ -214,6 +240,9 @@ def register_scheduling_tools(
 
     @registry.register(
         "cancel_appointment",
+        description=(
+            "Cancel one of the caller's existing appointments. Requires a verified caller."
+        ),
         tier=Tier.EXPLICIT_APPROVAL,
         input_model=CancelIn,
         output_model=CancelOut,
@@ -239,6 +268,11 @@ def register_scheduling_tools(
 
     @registry.register(
         "transfer_to_human",
+        description=(
+            "Hand the call to a person at the front desk. Always available. Use it whenever the "
+            "caller asks for a human, whenever anything clinical comes up, and whenever you are "
+            "unsure — transferring is never the wrong answer."
+        ),
         tier=Tier.AUTONOMOUS,
         input_model=TransferIn,
         output_model=TransferOut,

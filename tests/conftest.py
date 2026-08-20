@@ -212,6 +212,32 @@ class StubAdapter:
 # --------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_developer_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stop `Settings.load()` reading the repo's own `.env`.
+
+    The moment .env loading was added, every config test became dependent on
+    whether the machine running it happened to have a real key on disk --
+    green on CI, red locally, for reasons nothing in the test says. The tests
+    that are specifically ABOUT dotenv pass an explicit `env_file` and are
+    unaffected.
+    """
+    import voicedesk.config as config
+
+    monkeypatch.setattr(
+        config,
+        "load_dotenv_once",
+        lambda path=None: None if path is None else _real_dotenv(path),
+    )
+
+
+def _real_dotenv(path) -> None:
+    from dotenv import load_dotenv
+
+    if path is not None and path.is_file():
+        load_dotenv(path, override=False)
+
+
 @pytest.fixture
 def audit() -> RecordingAudit:
     return RecordingAudit()
