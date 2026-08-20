@@ -495,3 +495,114 @@ def test_history_is_provider_neutral() -> None:
     src = (REPO_ROOT / "src" / "voicedesk" / "agent.py").read_text(encoding="utf-8")
     assert "google" not in src.lower(), "the agent loop must not import a provider"
     assert Message.__name__ in src
+
+
+# ==========================================================================
+# Provider switching — the seam, tested against a real outage
+# ==========================================================================
+
+
+def test_switching_provider_touches_no_code_above_the_seam() -> None:
+    """The claim llm.py makes in its own docstring. Google AI Studio refused
+    the project with a 403 that no configuration could fix, and the fix was a
+    new class behind the Protocol -- the agent loop, the registry and the state
+    machine were not opened."""
+    for module in ("agent.py", "state.py", "prompts.py"):
+        src = (REPO_ROOT / "src" / "voicedesk" / module).read_text(encoding="utf-8")
+        assert "openrouter" not in src.lower(), f"{module} knows about a provider"
+        assert "gemini" not in src.lower(), f"{module} knows about a provider"
+
+
+def test_config_selects_the_provider(monkeypatch) -> None:
+    from voicedesk.config import LlmProvider, Settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    settings = Settings.load()
+
+    assert settings.llm_provider is LlmProvider.OPENROUTER
+    assert settings.require_llm() == "test-key"
+
+
+def test_an_unknown_provider_is_refused(monkeypatch) -> None:
+    from voicedesk.config import ConfigError, Settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic-via-carrier-pigeon")
+    with pytest.raises(ConfigError, match="LLM_PROVIDER"):
+        Settings.load()
+
+
+def test_build_from_settings_returns_the_right_class(monkeypatch) -> None:
+    from voicedesk.config import Settings
+    from voicedesk.llm import GeminiModel, OpenRouterModel, build_from_settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    assert isinstance(build_from_settings(Settings.load()), OpenRouterModel)
+
+    monkeypatch.setenv("LLM_PROVIDER", "google")
+    monkeypatch.setenv("GOOGLE_AI_API_KEY", "k")
+    assert isinstance(build_from_settings(Settings.load()), GeminiModel)
+
+
+def test_no_key_still_degrades_openly(monkeypatch) -> None:
+    from voicedesk.config import Settings
+    from voicedesk.llm import build_from_settings
+
+    monkeypatch.setenv("LLM_PROVIDER", "openrouter")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert build_from_settings(Settings.load()) is None
+
+
+def test_the_openrouter_key_is_redacted_in_logs(monkeypatch) -> None:
+    from voicedesk.config import Settings
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-super-secret")
+    assert "super-secret" not in str(Settings.load().loggable())
+
+
+def test_openai_tool_shape_keeps_the_full_schema() -> None:
+    """Unlike Gemini, the OpenAI shape accepts `additionalProperties`. That
+    asymmetry is exactly why schema translation lives per-provider rather than
+    in the registry."""
+    from voicedesk.llm import to_openai_tools
+    from voicedesk.tools.schemas import ConfirmBookingIn
+
+    tools = to_openai_tools(
+        [{
+            "name": "confirm_booking",
+            "description": "Book it.",
+            "parameters": ConfirmBookingIn.model_json_schema(),
+        }]
+    )
+    assert tools[0]["type"] == "function"
+    assert tools[0]["function"]["description"] == "Book it."
+    assert tools[0]["function"]["parameters"]["additionalProperties"] is False
+
+
+@pytest.mark.parametrize(
+    ("status", "fragment"),
+    [
+        (401, "rejected the API key"),
+        (402, "insufficient credit"),
+        (404, "does not serve"),
+        (429, "rate-limited"),
+    ],
+)
+def test_openrouter_errors_say_what_to_change(status: int, fragment: str) -> None:
+    """A raw status code does not tell anyone which .env line is wrong. Both
+    providers now map their common failures onto an actionable sentence --
+    added after a 404 and a 403 each cost a debugging round."""
+    from voicedesk.llm import _friendlier_openrouter
+
+    message = str(_friendlier_openrouter(status, "{}", "some/model"))
+    assert fragment in message
+
+
+def test_every_tool_has_a_description_for_the_model(tenant, adapter) -> None:
+    """schema_for_llm() sent none at all, so the model was choosing between
+    eight tools by guessing from their names."""
+    agent = make_agent(tenant, adapter, [])
+    for tool in agent.registry.schema_for_llm():
+        assert tool["description"].strip(), f"{tool['name']} has no description"
+        assert len(tool["description"]) > 40, f"{tool['name']}'s description is thin"

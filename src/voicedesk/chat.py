@@ -32,7 +32,7 @@ from voicedesk.adapters.memory import InMemoryAdapter
 from voicedesk.agent import Agent
 from voicedesk.audit import InMemoryAudit
 from voicedesk.config import ConfigError, Settings
-from voicedesk.llm import build_model
+from voicedesk.llm import build_from_settings
 from voicedesk.state import CallSession, VersionStamp
 from voicedesk.tenants import load_tenants
 from voicedesk.tools.registry import ToolRegistry
@@ -68,7 +68,7 @@ async def run(show_trace: bool, show_audit: bool) -> int:
         print(f"{RED}Configuration refused:{RESET} {exc}")
         return 2
 
-    model = build_model(settings.google_ai_api_key, model=settings.gemini_model)
+    model = build_from_settings(settings)
     if model is None:
         return missing_key_notice()
 
@@ -82,7 +82,7 @@ async def run(show_trace: bool, show_audit: bool) -> int:
         clinic_id=tenant.clinic_id,
         call_id=uuid4(),
         trace_id=f"chat-{uuid4().hex[:8]}",
-        versions=VersionStamp("prompt-2026-08-19", settings.gemini_model),
+        versions=VersionStamp("prompt-2026-08-19", settings.llm_model),
         dry_run=False,
     )
     agent = Agent(

@@ -255,6 +255,165 @@ def _to_gemini(history: Sequence[Message]) -> list[dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------
+# OpenRouter — one key, many providers, OpenAI-compatible
+# --------------------------------------------------------------------------
+
+
+class OpenRouterModel:
+    """OpenAI-compatible chat completions via OpenRouter.
+
+    Added because Google AI Studio refused the project with a 403 that no
+    configuration could fix. This is the seam earning its keep: the agent loop,
+    the registry, the state machine and every test above it are untouched.
+
+    **A data-protection note, recorded rather than buried.** OpenRouter is an
+    additional processor in the chain -- caller utterances transit their
+    infrastructure on the way to whichever provider serves the model. For the
+    current stage that is fine: the tenant is fictional, no real patient exists,
+    and D1a already accepted inference outside India (DPDP §16 permits it, and
+    the residency obligation binds recordings at rest, which stay in Mumbai).
+
+    Before any real patient call this needs a decision, not an assumption. See
+    PROJECT.md D16.
+    """
+
+    BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+    DEFAULT_MODEL = "deepseek/deepseek-chat"
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        model: str | None = None,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+    ) -> None:
+        self._api_key = api_key
+        self._model = model or self.DEFAULT_MODEL
+        self._url = base_url or self.BASE_URL
+        self._timeout = timeout
+
+    async def respond(
+        self,
+        *,
+        system: str,
+        history: Sequence[Message],
+        tools: Sequence[dict[str, Any]],
+    ) -> ModelTurn:
+        import httpx
+
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": _to_openai(system, history),
+            "temperature": 0.2,
+        }
+        if tools:
+            payload["tools"] = to_openai_tools(tools)
+            # "auto", never "required": the agent must be free to answer without
+            # calling anything, or every turn becomes a tool call and the caller
+            # gets silence while it thrashes.
+            payload["tool_choice"] = "auto"
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(
+                self._url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "X-Title": "Voice Desk",
+                },
+                json=payload,
+            )
+
+        if response.status_code != 200:
+            raise _friendlier_openrouter(response.status_code, response.text, self._model)
+
+        body = response.json()
+        if "choices" not in body:
+            raise ModelUnavailable(f"OpenRouter returned no choices: {str(body)[:200]}")
+
+        message = body["choices"][0].get("message") or {}
+        calls: list[ToolCall] = []
+        for call in message.get("tool_calls") or []:
+            fn = call.get("function") or {}
+            raw = fn.get("arguments") or "{}"
+            try:
+                args = json.loads(raw) if isinstance(raw, str) else dict(raw)
+            except json.JSONDecodeError:
+                # A model that emits unparseable arguments has hallucinated the
+                # call. Pass an empty dict so the registry refuses it on schema
+                # validation and the refusal is audited, rather than crashing
+                # the turn.
+                args = {}
+            calls.append(ToolCall(name=fn.get("name", ""), args=args))
+
+        return ModelTurn(
+            text=(message.get("content") or "").strip(),
+            tool_calls=tuple(calls),
+        )
+
+
+def to_openai_tools(tools: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Registry specs -> OpenAI `tools`.
+
+    No schema surgery needed here: the OpenAI shape accepts full JSON Schema,
+    including the `additionalProperties` that Gemini rejects outright. That
+    asymmetry is precisely why the translation lives per-provider.
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool.get("parameters", {}),
+            },
+        }
+        for tool in tools
+    ]
+
+
+def _to_openai(system: str, history: Sequence[Message]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    for message in history:
+        if message.role == "caller":
+            messages.append({"role": "user", "content": message.text})
+        elif message.role == "agent" and message.text:
+            messages.append({"role": "assistant", "content": message.text})
+        elif message.role == "tool":
+            rendered = "\n".join(
+                f"{r.name} returned: {json.dumps(r.payload, default=str)}"
+                for r in message.tool_results
+            )
+            fenced = f"<tool_results>\n{rendered}\n</tool_results>"
+            messages.append({"role": "user", "content": fenced})
+    return messages
+
+
+def _friendlier_openrouter(status: int, body: str, model: str) -> Exception:
+    if status in (401, 403):
+        return ModelUnavailable(
+            "OpenRouter rejected the API key. Check OPENROUTER_API_KEY in .env, "
+            "and that the key has not been revoked."
+        )
+    if status == 402:
+        return ModelUnavailable(
+            f"OpenRouter reports insufficient credit for {model!r}. Pick a "
+            f"free model -- set OPENROUTER_MODEL to one ending in ':free'."
+        )
+    if status == 404:
+        return ModelUnavailable(
+            f"OpenRouter does not serve {model!r}. Set OPENROUTER_MODEL to a "
+            f"model id from openrouter.ai/models."
+        )
+    if status == 429:
+        return ModelUnavailable(
+            f"OpenRouter rate-limited {model!r}. Free models throttle hard; "
+            f"wait, or set OPENROUTER_MODEL to a paid one."
+        )
+    return ModelUnavailable(f"OpenRouter returned {status}: {body[:200]}")
+
+
+# --------------------------------------------------------------------------
 # Scripted, for tests and for running without a key
 # --------------------------------------------------------------------------
 
@@ -298,7 +457,7 @@ class ScriptedModel:
 
 
 def build_model(
-    api_key: str | None, *, model: str = DEFAULT_MODEL
+    api_key: str | None, *, model: str = DEFAULT_MODEL, provider: str = "google"
 ) -> LanguageModel | None:
     """Returns None when no key is configured, so callers can degrade openly.
 
@@ -307,7 +466,25 @@ def build_model(
     """
     if not api_key:
         return None
+    if provider == "openrouter":
+        return OpenRouterModel(api_key, model=model)
     return GeminiModel(api_key, model=model)
+
+
+def build_from_settings(settings: Any) -> LanguageModel | None:
+    """Build whichever provider `LLM_PROVIDER` selects.
+
+    One call site for provider choice, so switching is a .env change rather
+    than an edit anywhere in the agent loop -- which is the whole claim the
+    seam makes, now tested against a real outage rather than a hypothetical.
+    """
+    provider = settings.llm_provider.value
+    key = (
+        settings.openrouter_api_key
+        if provider == "openrouter"
+        else settings.google_ai_api_key
+    )
+    return build_model(key, model=settings.llm_model, provider=provider)
 
 
 class ModelUnavailable(RuntimeError):

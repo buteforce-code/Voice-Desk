@@ -496,11 +496,65 @@ is the norm for these callers, and borrowed clinical vocabulary is the most code
 there is. `malicious-012` exists to catch exactly this asymmetry and would have found it at G5;
 the guard now carries Devanagari and Tamil transliterations of the English terms.
 
+### D16 — OpenRouter as a second reasoning provider (2026-08-20)
+
+Google AI Studio refused the project outright:
+
+```
+403 PERMISSION_DENIED — Your project has been denied access.
+```
+
+An account-level block, not a configuration one. Nothing in `.env` fixes it, and the alternative
+offered was attaching billing credentials, which is not a reasonable prerequisite for running a
+portfolio build locally.
+
+**This is the first time G7's provider-fallback requirement was needed, and it was not a drill.**
+The fix was a new class behind `LanguageModel` and one line in `.env` — `agent.py`, `state.py`,
+`prompts.py`, the registry and every test above the seam were not opened. A test now asserts none
+of those modules contains the string "gemini" or "openrouter" at all, so the claim stays true.
+
+Selected by `LLM_PROVIDER=google|openrouter`. Google remains the default and the intended
+production path.
+
+**The data-protection question, recorded rather than assumed.** OpenRouter is an *additional
+processor*: caller utterances transit their infrastructure on the way to whichever provider serves
+the model. For the current stage that is acceptable and the reasoning is already on file — the
+tenant is fictional, no real patient exists, and D1a accepted inference outside India because DPDP
+§16 permits processing abroad and the residency obligation binds recordings *at rest*, which stay
+in Supabase Mumbai.
+
+It is **not** automatically acceptable for a real patient call. Before rollout stage `shadow mode`
+this needs an actual decision: either the production path returns to a single named provider with a
+direct commercial relationship, or OpenRouter is assessed as a processor in its own right. Adding a
+hop to the chain quietly, because it was convenient during development, is exactly how a residency
+posture erodes.
+
+### Two things the live API taught that no test could (2026-08-20)
+
+First contact with the real endpoint produced three failures in a row, none reachable from any test
+in the suite — `ScriptedModel` accepts any dict, and the schemas were valid JSON Schema throughout:
+
+- **`400` — the tool schemas were rejected.** Gemini's `FunctionDeclaration` takes a subset of
+  OpenAPI 3.0. Pydantic's `extra="forbid"` emits `additionalProperties`, so the setting that makes
+  the tool contracts strict is the one the API refuses. `Optional[X]` was a second: pydantic writes
+  `anyOf[X, null]`, Gemini wants `nullable`. The OpenAI shape accepts both — which is why
+  translation belongs per-provider and not in the registry.
+- **`404` — `gemini-2.5-flash` was retired for new keys**, and the stack table in `CLAUDE.md` still
+  named it. A model id is the shortest-lived constant in the codebase; it belongs in config.
+
+Both now raise `ModelUnavailable` with a sentence saying which variable to change. A traceback
+about `models/x` does not tell anyone that `GEMINI_MODEL` is the knob, and a 403 about "your
+project" reads like a code bug until you know otherwise.
+
+Also found: `schema_for_llm()` sent **no tool descriptions**. The model was choosing between eight
+tools by guessing from their names.
+
 ---
 
 ## Log
 
 - **2026-08-16** — G0 scaffold. G1 and G2 written. D1–D4 recorded.
+- **2026-08-20** — First contact with the live model API. Tool-schema translation, model id moved to config, OpenRouter added as a second provider (D16). An API key had been typed into the tracked `.env.example`; caught before commit, nothing published, guard test added.
 - **2026-08-19** — C13/C14 output-side clinical guard implemented (D15) — the prohibited row's only capability that needs code rather than absence, and the only one that had none. Blocking in CI.
 - **2026-08-19** — State machine implemented (`state.py`): edge table, approval-token lifecycle, 3-attempt identity cap, bounded repair. Resolved a G3 contradiction — the write now happens in `execute`, not `approval` (D13) — and closed the gap where nothing could construct a `ToolContext` at all (D14).
 - **2026-08-19** — Config layer: `config.py` reads and validates the environment (nothing had read `.env` at all), `tenants.py` loads clinic config from disk, and `config/tenants/meridian.yaml` defines the demo tenant all 58 eval cases referenced and which existed nowhere. Rules that lived only in prose — Vertex AI blocked, Mumbai residency, call ceiling inside Railway's connection limit — are now startup failures.

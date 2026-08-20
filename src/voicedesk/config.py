@@ -46,6 +46,18 @@ class ConfigError(RuntimeError):
     """Startup refusal. Always names the variable and what it is for."""
 
 
+class LlmProvider(str, Enum):
+    """Which reasoning provider to use.
+
+    A seam, not a preference. G7 requires a provider fallback, and the first
+    time it was needed was not a planned drill: Google AI Studio refused the
+    project with a 403 that no configuration could fix.
+    """
+
+    GOOGLE = "google"
+    OPENROUTER = "openrouter"
+
+
 class ConsentStore(str, Enum):
     LOCAL = "local"
     CONSENT_MANAGER = "consent_manager"
@@ -157,9 +169,12 @@ class Settings:
     sarvam_default_language: str = "ta-IN"
 
     # -- reasoning --------------------------------------------------------
+    llm_provider: LlmProvider = LlmProvider.GOOGLE
     google_ai_api_key: str | None = None
     gemini_model: str = "gemini-3.6-flash"
     use_vertex_ai: bool = False
+    openrouter_api_key: str | None = None
+    openrouter_model: str = "deepseek/deepseek-chat"
 
     # -- data -------------------------------------------------------------
     database_dsn: str | None = None
@@ -193,7 +208,10 @@ class Settings:
             sarvam_stt_model=_env("SARVAM_STT_MODEL") or "saaras:v3",
             sarvam_tts_model=_env("SARVAM_TTS_MODEL") or "bulbul:v3",
             sarvam_default_language=_env("SARVAM_DEFAULT_LANGUAGE") or "ta-IN",
+            llm_provider=_llm_provider(),
             google_ai_api_key=_env("GOOGLE_AI_API_KEY"),
+            openrouter_api_key=_env("OPENROUTER_API_KEY"),
+            openrouter_model=_env("OPENROUTER_MODEL") or "deepseek/deepseek-chat",
             gemini_model=_env("GEMINI_MODEL") or "gemini-3.6-flash",
             use_vertex_ai=_bool("GOOGLE_GENAI_USE_VERTEXAI", False),
             database_dsn=_env("DATABASE_DSN") or _env("SUPABASE_DB_DSN"),
@@ -207,7 +225,7 @@ class Settings:
 
     def validate(self) -> None:
         """Invariants that hold regardless of which secrets are present."""
-        if self.use_vertex_ai:
+        if self.use_vertex_ai and self.llm_provider is LlmProvider.GOOGLE:
             raise ConfigError(
                 "GOOGLE_GENAI_USE_VERTEXAI must be false. Vertex AI is a "
                 "standing org-wide block; use Google AI Studio. See CLAUDE.md "
@@ -253,7 +271,20 @@ class Settings:
         return self._require("SARVAM_API_KEY", self.sarvam_api_key, "the speech pipeline")
 
     def require_llm(self) -> str:
-        return self._require("GOOGLE_AI_API_KEY", self.google_ai_api_key, "the reasoning step")
+        if self.llm_provider is LlmProvider.OPENROUTER:
+            return self._require(
+                "OPENROUTER_API_KEY", self.openrouter_api_key, "the reasoning step"
+            )
+        return self._require(
+            "GOOGLE_AI_API_KEY", self.google_ai_api_key, "the reasoning step"
+        )
+
+    @property
+    def llm_model(self) -> str:
+        """The model id in force, whichever provider is selected."""
+        if self.llm_provider is LlmProvider.OPENROUTER:
+            return self.openrouter_model
+        return self.gemini_model
 
     def require_database(self) -> str:
         return self._require(
@@ -277,7 +308,11 @@ class Settings:
             "DRY_RUN": str(self.dry_run),
             "KILL_SWITCH": str(self.kill_switch),
             "SARVAM_API_KEY": redact("SARVAM_API_KEY", self.sarvam_api_key),
+            "LLM_PROVIDER": self.llm_provider.value,
             "GOOGLE_AI_API_KEY": redact("GOOGLE_AI_API_KEY", self.google_ai_api_key),
+            "OPENROUTER_API_KEY": redact(
+                "OPENROUTER_API_KEY", self.openrouter_api_key
+            ),
             "DATABASE_DSN": redact("DATABASE_DSN", self.database_dsn),
             "GEMINI_MODEL": self.gemini_model,
             "SARVAM_STT_MODEL": self.sarvam_stt_model,
@@ -289,6 +324,15 @@ class Settings:
     def __repr__(self) -> str:  # pragma: no cover - trivial, but load-bearing
         """Never let a stray print or traceback carry a key."""
         return f"Settings({self.loggable()})"
+
+
+def _llm_provider() -> LlmProvider:
+    raw = _env("LLM_PROVIDER") or LlmProvider.GOOGLE.value
+    try:
+        return LlmProvider(raw.lower())
+    except ValueError as exc:
+        allowed = ", ".join(p.value for p in LlmProvider)
+        raise ConfigError(f"LLM_PROVIDER={raw!r} is not one of: {allowed}") from exc
 
 
 def _consent_store() -> ConsentStore:
