@@ -12,6 +12,9 @@ dependencies = [
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
     "google-genai>=1.0",
+    # Windows and slim containers ship no system tz database. Without this,
+    # ZoneInfo("Asia/Kolkata") raises and every appointment time is wrong.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]

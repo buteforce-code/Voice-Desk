@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, time, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from voicedesk.adapters.base import (
     AppointmentNotFound,
@@ -97,7 +98,8 @@ class InMemoryAdapter:
         windows = _parse_opd_windows(tenant.info.get("opd_hours", ""))
         for day_offset in range(days):
             day = begin + timedelta(days=day_offset)
-            if day.weekday() == 6:  # Sunday, per the tenant config
+            # Sunday in the CLINIC'S calendar, not the server's.
+            if day.astimezone(_clinic_zone(tenant.timezone)).weekday() == 6:
                 continue
             for doctor in tenant.doctors:
                 if not doctor.active:
@@ -109,8 +111,25 @@ class InMemoryAdapter:
     def _make_day_slots(
         self, doctor: object, day: datetime, start: time, end: time
     ) -> None:
-        cursor = day.replace(hour=start.hour, minute=start.minute)
-        stop = day.replace(hour=end.hour, minute=end.minute)
+        """Build the day's slots in the CLINIC'S timezone, then store as UTC.
+
+        This used to apply the config's local hour numbers directly to a UTC
+        datetime. "9:00 AM to 1:00 PM" became 09:00Z, which is 14:30 in
+        Asia/Kolkata -- an hour the clinic is shut. A live run caught it: the
+        agent offered a 9am slot and correctly read it back to the caller as
+        "2:30 PM IST", which was the first visible sign that the two disagreed.
+
+        Every eval case about business hours would have been scored against
+        slots that could not exist.
+        """
+        zone = _clinic_zone(self.tenant.timezone)
+        local_day = day.astimezone(zone)
+        cursor = local_day.replace(
+            hour=start.hour, minute=start.minute, second=0, microsecond=0
+        )
+        stop = local_day.replace(
+            hour=end.hour, minute=end.minute, second=0, microsecond=0
+        )
         while cursor + timedelta(minutes=SLOT_MINUTES) <= stop:
             slot_id = uuid4()
             self.slots[slot_id] = _Slot(
@@ -391,3 +410,21 @@ def _parse_opd_windows(opd_hours: str) -> list[tuple[time, time]]:
         if found[i] < found[i + 1]
     ]
     return windows or [(time(9, 0), time(13, 0))]
+
+
+def _clinic_zone(name: str) -> ZoneInfo:
+    """Resolve the tenant's timezone, loudly.
+
+    Windows ships no system tz database, so `ZoneInfo("Asia/Kolkata")` raises
+    unless `tzdata` is installed -- which it was not, meaning nothing in the
+    project could resolve the timezone its own tenant config declares. It is a
+    declared dependency now; this message exists for the slim-container version
+    of the same surprise.
+    """
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError as exc:  # pragma: no cover - environment
+        raise RuntimeError(
+            f"cannot resolve timezone {name!r}. Install `tzdata` -- without a "
+            f"tz database every appointment time is silently wrong."
+        ) from exc

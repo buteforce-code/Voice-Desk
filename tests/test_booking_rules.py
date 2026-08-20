@@ -80,10 +80,47 @@ def test_slots_are_generated_from_the_tenants_opd_hours(adapter, tenant) -> None
     assert max(starts) < 20
 
 
-def test_no_slots_on_sunday(adapter) -> None:
-    """The demo tenant's config says closed Sundays. A fixture that offers
-    Sunday slots would make every closed-day eval case unfalsifiable."""
-    assert not any(s.starts_at.weekday() == 6 for s in adapter.slots.values())
+def test_slot_hours_match_the_config_in_the_clinics_timezone(adapter, tenant) -> None:
+    """The bug a live call surfaced and no unit test did.
+
+    Slots were built by applying the config's local hour numbers directly to a
+    UTC datetime, so "9:00 AM" became 09:00Z -- 14:30 in Asia/Kolkata, an hour
+    the clinic is shut. The agent offered it and correctly read it back as
+    "2:30 PM IST", which was the only visible sign the two disagreed.
+
+    Every eval case about business hours would have scored against slots that
+    could not exist.
+    """
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tenant.timezone)
+    hours = sorted({s.starts_at.astimezone(zone).hour for s in adapter.slots.values()})
+
+    # "Monday to Saturday, 9:00 AM to 1:00 PM and 5:00 PM to 8:00 PM"
+    assert hours == [9, 10, 11, 12, 17, 18, 19], (
+        f"slot hours {hours} do not match the configured OPD windows"
+    )
+
+
+def test_the_tenant_timezone_is_resolvable() -> None:
+    """Windows and slim containers ship no tz database, so ZoneInfo raises
+    unless `tzdata` is installed -- and it was not. Nothing in the project
+    could resolve the timezone its own tenant config declares."""
+    from zoneinfo import ZoneInfo
+
+    assert ZoneInfo("Asia/Kolkata") is not None
+
+
+def test_no_slots_on_sunday(adapter, tenant) -> None:
+    """The demo tenant's config says closed Sundays. Checked in the CLINIC'S
+    calendar, not the server's -- near midnight UTC the two disagree about
+    which day it is."""
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tenant.timezone)
+    assert not any(
+        s.starts_at.astimezone(zone).weekday() == 6 for s in adapter.slots.values()
+    )
 
 
 def test_all_seeded_slots_are_in_the_future(adapter) -> None:

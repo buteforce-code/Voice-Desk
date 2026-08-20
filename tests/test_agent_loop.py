@@ -41,6 +41,21 @@ def adapter(tenant) -> InMemoryAdapter:
     return InMemoryAdapter.seeded(tenant)
 
 
+async def a_real_slot_id(adapter: InMemoryAdapter, tenant) -> str:
+    """A bookable slot id from the seeded fixture.
+
+    Needed because `hold_slot` is now what pins a proposal, and a hold against
+    a made-up id fails -- so a scenario using a placeholder would never reach
+    the state the test is about.
+    """
+    slots = await adapter.find_slots(
+        tenant.clinic_id, specialty="Cardiology", doctor_id=None,
+        earliest=None, latest=None, limit=1,
+    )
+    assert slots, "fixture produced no slots"
+    return str(slots[0].slot_id)
+
+
 def make_agent(tenant, adapter, turns: list[ModelTurn], language="en-IN") -> Agent:
     audit = InMemoryAudit()
     registry = ToolRegistry(audit)
@@ -68,14 +83,18 @@ def make_agent(tenant, adapter, turns: list[ModelTurn], language="en-IN") -> Age
 
 
 async def test_a_full_booking_runs_through_the_loop(tenant, adapter) -> None:
+    slot_id = await a_real_slot_id(adapter, tenant)
     agent = make_agent(
         tenant,
         adapter,
         [
             ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "Cardiology",
                                                           "limit": 3}),)),
-            ModelTurn(text="I can offer Wednesday at nine with Dr Sanjay Bhandari. "
-                           "Shall I book it?"),
+            ModelTurn(text="Wednesday at nine, or Thursday at four?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id,
+                                                         "ttl_seconds": 120}),)),
+            ModelTurn(text="Holding Wednesday at nine with Dr Sanjay Bhandari. "
+                           "Shall I confirm it?"),
             ModelTurn(text="Booked. See you Wednesday."),
         ],
     )
@@ -83,11 +102,15 @@ async def test_a_full_booking_runs_through_the_loop(tenant, adapter) -> None:
 
     first = await agent.turn("I'd like to book a cardiology appointment.")
     assert ("find_slots", "ok") in first.tool_calls
-    assert agent.session.state is CallState.DRAFT, (
-        "a proposal on the table is a draft -- validate runs against a slot the "
-        "caller has already chosen, immediately before approval"
+    assert agent.session.state is CallState.DRAFT
+    assert agent.pending_write is False, (
+        "a list of options is not a proposal -- agreeing to a list does not "
+        "identify which appointment to make"
     )
-    assert agent.pending_write is True
+
+    picked = await agent.turn("Wednesday at nine, please.")
+    assert ("hold_slot", "ok") in picked.tool_calls
+    assert agent.pending_write is True, "a hold pins exactly one slot"
 
     second = await agent.turn("Yes, please book it.")
     assert agent.session.state is CallState.EXECUTE, (
@@ -172,12 +195,15 @@ async def test_a_hesitation_never_counts_as_a_yes(
     went through. "Right, so what time" is why bare "right" went too -- it is a
     discourse marker far more often than it is agreement.
     """
+    slot_id = await a_real_slot_id(adapter, tenant)
     agent = make_agent(
         tenant,
         adapter,
         [
             ModelTurn(tool_calls=(ToolCall("find_slots", {"limit": 1}),)),
-            ModelTurn(text="Wednesday at nine. Shall I book it?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id,
+                                                         "ttl_seconds": 120}),)),
+            ModelTurn(text="Wednesday at nine, held. Shall I confirm it?"),
             ModelTurn(text="Of course, take your time."),
         ],
     )
@@ -205,12 +231,15 @@ async def test_a_plain_yes_still_confirms(
 ) -> None:
     """The control for the test above. A matcher tightened until nothing
     matches would pass every hesitation case and make booking impossible."""
+    slot_id = await a_real_slot_id(adapter, tenant)
     agent = make_agent(
         tenant,
         adapter,
         [
             ModelTurn(tool_calls=(ToolCall("find_slots", {"limit": 1}),)),
-            ModelTurn(text="Wednesday at nine. Shall I book it?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id,
+                                                         "ttl_seconds": 120}),)),
+            ModelTurn(text="Wednesday at nine, held. Shall I confirm it?"),
             ModelTurn(text="Booked."),
         ],
     )
@@ -230,12 +259,15 @@ async def test_declining_a_slot_stays_in_draft_to_propose_another(
     failure and not a step backwards. Callers turn down two or three slots
     routinely; the machine is forward-only, so re-proposing must not need a
     backward edge -- and it does not, because it never leaves `draft`."""
+    slot_id = await a_real_slot_id(adapter, tenant)
     agent = make_agent(
         tenant,
         adapter,
         [
             ModelTurn(tool_calls=(ToolCall("find_slots", {"limit": 3}),)),
-            ModelTurn(text="Wednesday at nine?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id,
+                                                         "ttl_seconds": 120}),)),
+            ModelTurn(text="Wednesday at nine, held?"),
             ModelTurn(text="Of course. Thursday at four instead?"),
             ModelTurn(text="Booked for Thursday."),
         ],

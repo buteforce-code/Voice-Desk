@@ -103,8 +103,10 @@ _STATE_HINTS = {
         "anything you have not retrieved."
     ),
     CallState.DRAFT: (
-        "Put the proposal to the caller in one sentence: doctor, day, time. "
-        "Then stop and wait. Nothing is booked yet."
+        "Offer at most two times, not a list. When the caller picks one, call "
+        "`hold_slot` on that slot id, then read back doctor, day and time in "
+        "one sentence and wait for them to confirm. Nothing is booked yet, and "
+        "a hold is not a booking -- never describe it as one."
     ),
     CallState.VALIDATE: (
         "The proposal is being checked. Do not promise the caller anything."

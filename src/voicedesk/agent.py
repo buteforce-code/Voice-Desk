@@ -109,9 +109,9 @@ class Agent:
     history: list[Message] = field(default_factory=list)
     traces: list[TurnTrace] = field(default_factory=list)
     pending_write: bool = False
-    """True once a concrete proposal is on the table. Only then can a caller's
-    yes mean anything -- otherwise an early "sure" would promote a call with
-    nothing drafted into the state that writes."""
+    """True once ONE specific slot is held. Only then can a caller's yes mean
+    anything: before a hold there is a list on the table, and agreeing to a
+    list does not identify which appointment to make."""
 
     # -- call lifecycle ---------------------------------------------------
 
@@ -266,6 +266,14 @@ class Agent:
 
         if tool_name in {"find_slots", "find_appointments"} and state is CallState.RESEARCH:
             self.session.transition_to(CallState.DRAFT, f"{tool_name} returned")
+            return
+
+        # A hold is what pins ONE slot. Until then the caller has been shown a
+        # list, and "yes" to a list is not consent to any particular item --
+        # the first live run said "Yes, book it" against five options and the
+        # session promoted itself into the writing state. This model asked
+        # which one; a less careful one books whichever it saw first.
+        if tool_name == "hold_slot" and state is CallState.DRAFT:
             self.pending_write = True
             return
 
