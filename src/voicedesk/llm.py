@@ -67,6 +67,18 @@ class ModelTurn:
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
 
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    """What the provider says this turn cost, in tokens.
+
+    Tokens, not rupees. G7 owns the cost ledger and the price table that turns
+    one into the other; recording a currency figure here would mean inventing a
+    rate for whichever provider happened to serve the call, and a fabricated
+    cost is the same sin as a fabricated booking wearing a finance hat.
+
+    Zero means the provider reported nothing, not that the turn was free.
+    """
+
     @property
     def wants_tools(self) -> bool:
         return bool(self.tool_calls)
@@ -150,7 +162,13 @@ class GeminiModel:
                 if fn is not None:
                     calls.append(ToolCall(name=fn.name, args=dict(fn.args or {})))
 
-        return ModelTurn(text=" ".join(text_parts).strip(), tool_calls=tuple(calls))
+        usage = getattr(response, "usage_metadata", None)
+        return ModelTurn(
+            text=" ".join(text_parts).strip(),
+            tool_calls=tuple(calls),
+            prompt_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
+            completion_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
+        )
 
 
 # Gemini's FunctionDeclaration takes a SUBSET of OpenAPI 3.0, not arbitrary
@@ -346,9 +364,12 @@ class OpenRouterModel:
                 args = {}
             calls.append(ToolCall(name=fn.get("name", ""), args=args))
 
+        usage = body.get("usage") or {}
         return ModelTurn(
             text=(message.get("content") or "").strip(),
             tool_calls=tuple(calls),
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
         )
 
 

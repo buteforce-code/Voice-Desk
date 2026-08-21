@@ -21,25 +21,42 @@ when the caller asks for medical advice in English and Hindi, when identity
 fails three times, and what the audit log recorded for all of it.
 
 Every path is **scripted** — there is no model in the loop. That makes it a
-demonstration of the controls, not of the agent's judgement. Wiring Gemini in
-place of the script is the next step, and the first that needs a key.
+demonstration of the controls, not of the agent's judgement. For the agent's
+judgement, see the eval suite below; for a conversation, `voicedesk.chat`.
 
 ```bash
-uv run pytest tests/ -q          # 386 tests, no secrets required
+uv run pytest tests/ -q          # 480 tests, no secrets required
 uv run python -m evals.run --validate
 ```
 
 ## Talk to it
 
-One key — `GOOGLE_AI_API_KEY` in `.env`. No database, no telephony.
+One key — `GOOGLE_AI_API_KEY` or `OPENROUTER_API_KEY` in `.env`. No database, no
+telephony.
 
 ```bash
 uv run python -m voicedesk.chat --trace --audit
 ```
 
-Real Gemini, real tool calling, real state machine, real clinical guard, real
+Real model, real tool calling, real state machine, real clinical guard, real
 audit trail. You type instead of talking; STT and TTS sit on either end of
 exactly this loop, which is why it is the cheapest place to find a booking bug.
+
+## Score it
+
+```bash
+uv run python -m evals.run --validate     # case conformance. no key, no network
+uv run python -m evals.run --run          # 58 cases against the live model
+```
+
+Drives every case through the same loop and scores it: did the caller's intent
+resolve in the register, was every factual claim traceable to a tool result,
+did a prohibited action occur. A violation fails a case outright — booking the
+right slot while giving medical advice is a failure, not a partial pass.
+
+Two things the report always says out loud. A case the harness cannot stage is
+**SKIP, never PASS**. A case that declares a backend failure and does not get
+one is **VOID, never PASS**.
 
 
 ## Why this exists
@@ -59,9 +76,11 @@ The out-of-scope list is enforced by missing code paths and missing database gra
 
 ## Status
 
-**Pre-offline-eval.** Scaffold and definition only. No pipeline code yet. Nothing is deployed and nothing can reach a real patient.
+**Pre-offline-eval.** Nothing is deployed and nothing can reach a real patient.
 
-Gates passed: **G0, G1, G2.** See `PROJECT.md`.
+Gates passed: **G0–G4**, and **G6** (9 validator modules, 480 tests, blocking in CI). **G5** has a
+scoring harness and a committed baseline — `3/58` at `--repeat 3`, and **0% booking accuracy**. That
+is a starting point, not a passing grade, and it is the point of having measured it. `PROJECT.md` carries the detail and the gaps.
 
 ## Architecture
 
@@ -70,8 +89,8 @@ PSTN ──▶ Plivo/Exotel DID ──▶ Pipecat (Python, Render/GCP, India reg
                                  │
                     ┌────────────┼────────────┐
                     ▼            ▼            ▼
-              Sarvam STT   Gemini 2.5    Sarvam TTS
-              (Saaras)      Flash        (Bulbul)
+              Sarvam STT   Gemini /     Sarvam TTS
+              (Saaras)     OpenRouter    (Bulbul)
                                  │
                                  ▼
                    narrow tools (server-side authz)
@@ -94,12 +113,13 @@ Single-tenant-shaped, multi-tenant-ready. `clinic_id` on every row from the firs
 
 ## Running it
 
-Not yet runnable. Once the pipeline lands:
+The text pipeline runs today — see **Talk to it** and **Score it** above. Speech
+and telephony are what remain:
 
 ```bash
 cp .env.example .env      # fill in the keys
 uv sync                   # installs pipecat + sarvam override
-python -m voicedesk.dev   # local dev with a tunnelled DID
+python -m voicedesk.dev   # local dev with a tunnelled DID — not yet built
 ```
 
 Deploy target is Railway (Asia Southeast). **Never the dev laptop.** All data at rest stays in Supabase Mumbai — see `PROJECT.md` §2.4.
@@ -112,6 +132,7 @@ Deploy target is Railway (Asia Southeast). **Never the dev laptop.** All data at
 | `CLAUDE.md` | Contract for AI agents working in this repo |
 | `evals/` | The versioned test set — the gate that decides whether the rest was real |
 | `tests/` | Deterministic validators and prohibited-capability tests |
+| `evals/README.md` | How the harness works and what each metric actually counts |
 
 Governing standard: `.agents/rules/agent_build_standard.md` · `.agents/workflows/new_project_lifecycle.md`
 

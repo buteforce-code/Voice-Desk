@@ -9,6 +9,7 @@ Tiers come from the PROJECT.md risk register and are enforced in registry.py.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from voicedesk.adapters.base import SchedulingAdapter
 from voicedesk.tenants import Tenant
@@ -41,9 +42,20 @@ class TenantConfig:
     """Loaded into memory at call start. Never fetched mid-turn — a network
     lookup on the hot path is a latency bug (see docs/LATENCY.md)."""
 
-    def __init__(self, data: dict[str, str], escalation_msisdn: str) -> None:
+    def __init__(
+        self,
+        data: dict[str, str],
+        escalation_msisdn: str,
+        timezone: str = "Asia/Kolkata",
+    ) -> None:
         self._data = data
         self.escalation_msisdn = escalation_msisdn
+        self.timezone = timezone
+        """The clinic's zone, needed to read a naive datetime the model sent.
+
+        The prompt tells the model every time is clinic-local, so when it omits
+        an offset that is what it means. Interpreting it as UTC instead shifts
+        the search window by five and a half hours."""
 
     def get(self, field: str, specialty: str | None = None) -> tuple[str, str]:
         """Returns (value, source_key). The key is evidence: the dashboard
@@ -64,7 +76,32 @@ class TenantConfig:
         YAML file to what the agent says about the clinic runs entirely through
         the loader's validation.
         """
-        return cls(dict(tenant.info), escalation_msisdn=tenant.escalation_msisdn)
+        return cls(
+            dict(tenant.info),
+            escalation_msisdn=tenant.escalation_msisdn,
+            timezone=tenant.timezone,
+        )
+
+
+def _clinic_local(value: datetime | None, timezone: str) -> datetime | None:
+    """Attach the clinic's zone to a datetime the model sent without one.
+
+    The model is told, every turn, that all times are clinic-local. When it
+    omits the offset that is what it means, so this reads it that way rather
+    than assuming UTC -- which would move the search window by five and a half
+    hours and return an afternoon when the caller asked for a morning.
+
+    Found by the eval suite's first full run: `find_slots` raised
+    `TypeError: can't compare offset-naive and offset-aware datetimes` on
+    ordinary model output, the registry converted it to `tool_failed`, and the
+    agent spent the rest of the call apologising for a scheduler that was fine.
+    """
+    if value is None or value.tzinfo is not None:
+        return value
+    try:
+        return value.replace(tzinfo=ZoneInfo(timezone))
+    except (ZoneInfoNotFoundError, ValueError):  # pragma: no cover - config validates this
+        return value.replace(tzinfo=UTC)
 
 
 def register_scheduling_tools(
@@ -108,12 +145,21 @@ def register_scheduling_tools(
     async def find_slots(args: FindSlotsIn, ctx: ToolContext) -> FindSlotsOut:
         # The only speculatively-prefetchable tool with real latency value:
         # started on high-confidence intent before the caller finishes.
+        #
+        # The window is normalised here because this is the boundary that knows
+        # the tenant. Models routinely emit "2026-08-23T00:00:00" with no
+        # offset; pydantic accepts it as a naive datetime, the adapter compares
+        # it against tz-aware slot times, and Python raises TypeError. The
+        # registry catches that at the handler boundary and hands the agent
+        # `tool_failed` -- so the most-used tool in the product fails on
+        # ordinary model output, and the transcript shows an agent apologising
+        # for a scheduler that is fine.
         slots = await adapter.find_slots(
             ctx.clinic_id,
             specialty=args.specialty,
             doctor_id=args.doctor_id,
-            earliest=args.earliest or datetime.now(UTC),
-            latest=args.latest,
+            earliest=_clinic_local(args.earliest, config.timezone) or datetime.now(UTC),
+            latest=_clinic_local(args.latest, config.timezone),
             limit=args.limit,
         )
         return FindSlotsOut(slots=slots, truncated=len(slots) >= args.limit)

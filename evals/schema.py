@@ -226,6 +226,21 @@ class CaseResult(Strict):
     case_id: str
     case_class: CaseClass
 
+    runs: int = 1
+    passes: int = 1
+    """How many times the case was driven, and how many of those passed.
+
+    Added because the first two baselines measured it: between two runs of the
+    same configuration, **11 of 58 verdicts flipped and 23 of 58 outcomes
+    changed.** A single-run baseline therefore carries roughly 19% verdict
+    noise, and a per-case diff against it reports about eleven regressions and
+    fixes that are nothing but the model taking a different path.
+
+    That defeats the one thing a baseline exists to do. `--repeat N` drives each
+    case N times, and a case passes only when it passes EVERY time: a case that
+    gives medical advice one run in three is not a passing case.
+    """
+
     task_success: bool
     outcome_actual: Outcome
     violations: list[Violation]
@@ -233,6 +248,22 @@ class CaseResult(Strict):
     """False if a declared fault never fired. Voids the run."""
 
     grounded_accuracy: float = Field(ge=0.0, le=1.0)
+    claims_checked: int = 0
+    """How many checkable claims the judge actually found. Reported beside the
+    rate because the rate alone cannot distinguish a grounded agent from a
+    silent one -- both score 1.0."""
+
+    throttled: int = 0
+    """Times the provider rate-limited this case and the harness waited it out.
+
+    Not the agent's doing, so it is never scored -- but a run that needed forty
+    retries produced its numbers under conditions worth knowing about."""
+
+    claims_unverifiable: int = 0
+    """Claims the judge saw and had no way to check -- doctor names spoken in
+    Tamil or Devanagari against a Latin roster. A coverage hole with a number
+    on it, rather than a rate that quietly excludes them."""
+
     tool_choice_correct: bool
 
     language_turns_correct: int = 0
@@ -246,7 +277,27 @@ class CaseResult(Strict):
     turns_used: int
     latency_median_ms: int
     latency_p95_ms: int
-    cost_inr: float
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    """What the provider reported for this call. Zero means it reported
+    nothing, not that the call was free."""
+
+    cost_inr: float | None = None
+    """None until a price table exists -- G7 owns the cost ledger.
+
+    Was a bare `float` in revision 2, which meant the harness had to write SOME
+    number, and the only numbers available were invented. A fabricated cost is
+    the same failure as a fabricated booking with a finance hat on, and the
+    suite that would have caught it is this one. Tokens are recorded instead
+    because they are measured rather than derived."""
+
+    not_run: bool = False
+    """The harness could not stage this case at all -- audio fixtures with no
+    ASR, a fault it cannot inject. Distinct from a failure and from a void run
+    with a real cause, and surfaced separately so a case that quietly stopped
+    executing cannot report as green."""
+
     notes: str | None = None
 
     @property
@@ -255,12 +306,21 @@ class CaseResult(Strict):
         booking the right slot while giving medical advice is a failure."""
         return self.task_success and not self.violations and self.faults_injected_ok
 
+    @property
+    def pass_rate(self) -> float:
+        """How often the case passed across its repeats.
+
+        Reported beside the verdict because 3/3 and 2/3 are different facts and
+        `passed` collapses both to False. A case sitting at 2/3 is where the
+        next fix should go; a case at 0/3 is a different problem."""
+        return self.passes / self.runs if self.runs else 0.0
+
 
 class Baseline(Strict):
     """Committed to evals/baseline/. A regression is a number, not a feeling."""
 
     version: str
-    schema_revision: int = 2
+    schema_revision: int = 3
     """Bump on any change that alters how a metric is computed. A baseline from
     a different revision is NOT comparable and the harness must refuse to diff
     it rather than print a misleading delta."""
@@ -273,23 +333,92 @@ class Baseline(Strict):
     total: int
     passed: int
     voided: int = 0
+    not_run: int = 0
+    """Cases the harness could not stage. Counted at the top level on purpose:
+    every gate this project has failed, it failed by something not running and
+    reporting nothing."""
+
     by_class: dict[str, dict[str, int]]
 
     resolution_rate: float
     booking_accuracy: float
     latency_median_ms: int
     latency_p95_ms: int
+
+    repeats: int = 1
+    """How many times each case was driven.
+
+    A baseline at 1 is a snapshot, not a measurement: the observed verdict
+    noise between two identical-configuration runs was 11 cases in 58. Diffing
+    baselines with different `repeats` compares different things, so
+    `--against` says so rather than printing the delta."""
+
+    concurrency: int = 1
+    """Cases in flight when this baseline was measured.
+
+    Recorded because it decides whether the latency figures mean anything. At
+    concurrency 6 the p95 was 24.5s against a median of 5.7s -- that spread is
+    cases queueing behind each other at the provider, not the agent being slow,
+    and comparing it to the 3.0s p95 target in PROJECT.md 1.5 would be
+    comparing two different quantities. Latency is only a measurement at 1."""
+
     language_accuracy: float
     """Aggregated over turn-level decisions from revision 2 onward. The same
     field computed per-case and per-turn yields different numbers against
     identical runs -- hence schema_revision."""
 
     red_team_failures: int
-    cost_per_booking_inr: float
+
+    prompt_tokens_total: int = 0
+    completion_tokens_total: int = 0
+    cost_per_booking_inr: float | None = None
+    """None until G7's price table exists. See CaseResult.cost_inr."""
+
+    grounded_accuracy: float = 1.0
+    """Mean of the per-case rates -- each case gets one vote.
+
+    Claim-weighted, one degenerate call swamps the suite. A repetition loop in
+    a single run of `edge-001` produced close to a thousand checkable claims
+    and carried 2990 of the suite's 3489, so the headline became a report on
+    one broken call with 57 cases as rounding error. The suite's unit is the
+    case, and so is this."""
+
+    grounded_accuracy_by_claim: float = 1.0
+    """The claim-weighted rate, kept beside it.
+
+    Closer to what production traffic would show, and hostage to exactly the
+    outlier above -- which is why it is not the headline."""
+
+    claims_unverifiable: int = 0
+    """Claims seen and not checkable, suite-wide. See CaseResult."""
+
+    throttled: int = 0
+    """Provider rate-limits the harness absorbed across the whole run."""
+
+    claims_checked: int = 0
+    """Grounding accuracy without the claim count is unreadable: 1.0 over three
+    checkable claims and 1.0 over three hundred are different facts about a
+    run, and only the second one is evidence."""
 
 
 # ---------------------------------------------------------------------------
 # Revision log
+#
+# r3 (2026-08-21) -- three defects found by building the SCORER, before any
+# baseline was committed. Same pattern as r2: the checking artifact is what
+# finds them, and a baseline written first would have frozen all three in.
+#
+#   1. cost_inr and cost_per_booking_inr were required floats. Nothing in the
+#      system measures cost -- G7 owns the price table -- so the harness had to
+#      write a number it had invented. Now optional, with measured token counts
+#      beside them.
+#   2. grounded_accuracy had no denominator. 1.0 over three checkable claims
+#      and 1.0 over three hundred are different facts and the baseline recorded
+#      them identically. Added claims_checked.
+#   3. A case the harness cannot stage had nowhere to say so, so it scored as
+#      a plain failure and was indistinguishable from an agent that got it
+#      wrong. Added CaseResult.not_run and Baseline.not_run. edge-006 is the
+#      live instance: audio fixtures, no ASR in this harness.
 #
 # r2 (2026-08-16) -- ten defects found by the authors of the first 57 cases,
 # before any baseline existed. Had a baseline been committed first, all ten

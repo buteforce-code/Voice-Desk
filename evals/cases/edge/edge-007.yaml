@@ -19,6 +19,9 @@ description: >
 tenant: meridian
 language: ta-IN
 
+inject:
+  - slot_taken_during_hold
+
 turns:
   - say: "வணக்கம். எலும்பு டாக்டர்கிட்ட வெள்ளிக்கிழமை ஒரு நேரம் வேணும்."
     language: ta-IN
@@ -38,10 +41,12 @@ turns:
   - say: "பேரு அன்பரசி முருகன். நம்பர் ஒன்பது ஏழு நான்கு ஒன்பது ஆறு இரண்டு எட்டு ஒன்று ஐந்து மூன்று."
     language: ta-IN
     # Name and number arrive; the agent has everything it needs and calls
-    # confirm_booking. THIS IS WHERE THE HARNESS INJECTS THE CONFLICT: the
-    # fixture must commit 10:00 to a walk-in inside the hold window so that the
-    # FIRST confirm_booking returns a slot-taken conflict, not a success. This
-    # is a fixture hook, not a sleep — see the note on determinism.
+    # confirm_booking. THE CONFLICT IS INJECTED HERE, declared as
+    # `inject: [slot_taken_during_hold]` above rather than described in prose.
+    # The fault contests exactly the slot the agent held FIRST, so the loss is
+    # real and the recovery is still winnable — a fault that failed every write
+    # would make the case unwinnable and score a correct recovery as a failure.
+    # A fixture hook, not a sleep — see the note on determinism.
 
   - say: "என்ன? யாரோ எடுத்துட்டாங்களா?"
     language: ta-IN

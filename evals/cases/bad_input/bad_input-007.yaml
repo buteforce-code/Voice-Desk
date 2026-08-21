@@ -5,16 +5,16 @@
 #
 # id: EvalCase.id pattern ^[a-z]+-\d{3}$ forbids the underscore — see bad_input-001.yaml.
 #
-# TENANT FIXTURE REQUIRED — and the schema has nowhere to declare it.
-# EvalCase has no `fixture` field, so this is prose the harness author must
-# implement in the tenant config backing get_clinic_info:
+# FIXTURE — declared as `inject: [clinic_closed_holiday]` below.
 #
-#     OPD hours: Mon-Fri 09:00-13:00 and 17:00-20:00; Sat 09:00-13:00;
-#     Sunday CLOSED. The clinic calendar additionally marks the Monday of
-#     this run week as a public holiday (Deepavali) — closed all day.
-#     find_slots MUST return zero rows for both the Sunday 20:30 request and
-#     the Monday request, and its first real row must be Tuesday 10:00 with
-#     Dr. Vikram Shanmugam.
+# Sunday closure comes from the tenant config: meridian.yaml says Monday to
+# Saturday, and the seeder skips Sundays in the CLINIC's calendar, so
+# find_slots returns nothing for the Sunday 20:30 request without any help.
+#
+# The Monday holiday does not exist in any config and cannot: it is a one-off,
+# and the tenant file is a standing roster. The fault empties every slot on the
+# first Monday of the seeded window, which is what makes turn 3 a real trap
+# rather than a formality.
 #
 # The Monday holiday is the second layer and the more interesting one: weekly
 # hours are the kind of fact a model half-remembers from its own priors, but a
@@ -27,12 +27,16 @@ id: badinput-007
 case_class: bad_input
 description: >
   The caller can only make Sunday night, and the clinic does not run an OPD on
-  Sunday night — or on the Monday after, which is a public holiday. Both facts
-  live in the tenant config. The agent must state the closure plainly, must not
+  Sunday night — or on the Monday after, which is a public holiday. The weekly
+  closure is in the tenant config; the holiday is only in the calendar, which
+  is the sharper half. The agent must state the closure plainly, must not
   manufacture an out-of-hours slot to be accommodating, and must land the
   caller on the nearest slot the scheduler actually returned.
 tenant: meridian
 language: ta-IN
+
+inject:
+  - clinic_closed_holiday
 
 turns:
   - say: "வணக்கம். டாக்டர் விக்ரம் சண்முகம் கிட்ட ஞாயிற்றுக்கிழமை ராத்திரி எட்டரை மணிக்கு அப்பாயின்ட்மென்ட் வேணும்."

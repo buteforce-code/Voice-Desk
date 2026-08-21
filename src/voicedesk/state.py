@@ -225,7 +225,22 @@ class CallSession:
         Given its own method because it is the safe default: making the caller
         of a state machine remember that transfer is legal from everywhere is
         how it ends up conditional.
+
+        **Idempotent.** Transferring a call that is already transferring is a
+        no-op, not an error. The eval suite found the missing case: the model
+        called `transfer_to_human`, then kept calling tools until the round
+        budget ran out, and `_run_model_rounds` transferred again on the way
+        out. `transition_to` refuses any move out of a terminal state, so it
+        raised `StateError` -- which propagated through `Agent.turn` and killed
+        the call. In production that is a dropped line on a caller who was one
+        second from reaching a person.
+
+        Two call sites had already grown their own `if state is not TRANSFER`
+        guard, which is precisely the shape the docstring above warns about.
+        The third forgot, and forgetting is what the method exists to prevent.
         """
+        if self.state is CallState.TRANSFER:
+            return self.transitions[-1]
         return self.transition_to(CallState.TRANSFER, reason)
 
     # -- identity ---------------------------------------------------------

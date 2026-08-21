@@ -493,3 +493,69 @@ def test_the_in_memory_adapter_is_labelled_as_non_production() -> None:
         REPO_ROOT / "src" / "voicedesk" / "adapters" / "memory.py"
     ).read_text(encoding="utf-8")
     assert "not for production" in src.lower()
+
+
+# --------------------------------------------------------------------------
+# The search window, as the model actually sends it
+# --------------------------------------------------------------------------
+#
+# Found by the eval suite's first full run, not by any test above. The model
+# emits `"2026-08-23T00:00:00"` with no offset roughly as often as it emits one;
+# pydantic accepts it as a naive datetime, the adapter compares it against
+# tz-aware slot times, and Python raises TypeError. The registry converts that
+# to `tool_failed` at the handler boundary, so the symptom is not a crash --
+# it is the most-used tool in the product silently failing on ordinary model
+# output while the agent apologises for a scheduler that is fine.
+#
+# Nothing below the seam could have caught it: every test here passed a
+# tz-aware datetime or None, because a human writing a fixture reaches for
+# `datetime.now(UTC)`.
+
+
+async def test_find_slots_accepts_a_naive_datetime_from_the_model(adapter, tenant):
+    from voicedesk.tools.scheduling import _clinic_local
+
+    naive = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1)
+    floor = _clinic_local(naive, tenant.timezone)
+
+    assert floor is not None and floor.tzinfo is not None
+    slots = await adapter.find_slots(
+        tenant.clinic_id,
+        specialty="Cardiology",
+        doctor_id=None,
+        earliest=floor,
+        latest=None,
+        limit=3,
+    )
+    assert slots, "a naive window must still return slots, not raise"
+
+
+def test_a_naive_datetime_is_read_as_clinic_local_not_utc(tenant):
+    """Reading it as UTC moves the window five and a half hours.
+
+    A caller asking for a 9am slot would be offered the afternoon, and the
+    agent would be right that the scheduler said so.
+    """
+    from voicedesk.tools.scheduling import _clinic_local
+
+    naive_nine_am = datetime(2026, 8, 24, 9, 0)
+    localised = _clinic_local(naive_nine_am, tenant.timezone)
+
+    assert localised is not None
+    assert localised.utcoffset() == timedelta(hours=5, minutes=30)
+    assert localised.astimezone(UTC).hour == 3
+
+
+def test_an_offset_the_model_did_send_is_left_alone(tenant):
+    from voicedesk.tools.scheduling import _clinic_local
+
+    aware = datetime(2026, 8, 24, 9, 0, tzinfo=UTC)
+    assert _clinic_local(aware, tenant.timezone) == aware
+
+
+def test_the_tenant_timezone_reaches_the_tool_layer(tenant):
+    """It travels through TenantConfig, so a tenant in another zone gets its
+    own. Hard rule 8: no clinic identity in code, timezone included."""
+    from voicedesk.tools.scheduling import TenantConfig
+
+    assert TenantConfig.from_tenant(tenant).timezone == tenant.timezone

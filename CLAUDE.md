@@ -38,7 +38,7 @@ business need → risk boundary → workflow + UX → tools/data
 | Orchestration | Pipecat (Python, self-hosted) |
 | Pipeline | Cascaded STT → LLM → TTS |
 | Speech (ta/hi/en) | Sarvam — Saaras STT, Bulbul TTS |
-| Reasoning | Gemini 2.5 Flash via Google AI Studio |
+| Reasoning | Google AI Studio (default) or OpenRouter — `LLM_PROVIDER`. **The model id lives in config, never here**: `gemini-2.5-flash` was retired for new keys on 2026-08-20 while this table still named it, and a model id is the shortest-lived constant in the codebase (D16) |
 | Telephony | Plivo or Exotel (inbound DID) |
 | Data | Supabase (Postgres), India region |
 | Dashboard | Next.js 16 · React 19 · Tailwind v4 · Framer Motion |

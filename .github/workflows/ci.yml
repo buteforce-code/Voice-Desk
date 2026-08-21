@@ -101,10 +101,42 @@ jobs:
       - name: Validate eval cases
         run: uv run python -m evals.run --validate
 
-      # Compares against the committed baseline so a regression is a number,
-      # not a feeling. Exits 0 while no baseline exists (by design -- see
-      # evals/run.py::cmd_baseline), so this is blocking without being a lie.
-      - name: Run evals against baseline
-        run: uv run python -m evals.run --baseline evals/baseline/latest.json
+      # The scorer itself. A scorer that cannot fail reports a perfect suite,
+      # and the number it writes is what every later change is judged against,
+      # so its detectors get positive AND negative controls. No key, no model,
+      # no network: a RunRecord is data.
+      - name: Eval harness tests
+        run: uv run pytest tests/test_eval_harness.py tests/test_eval_judge.py -v
+
+  # The SCORED run. Deliberately not on push.
+  #
+  # G5 asks for the suite to run in CI on every model, prompt, tool or
+  # retrieval change. Case conformance and the scorer's own tests do, above.
+  # The scored run does not, and saying so is better than a job that skips
+  # itself when a secret is missing and reports green -- which is the exact
+  # failure this file already carries a comment about.
+  #
+  # It needs a provider key and it spends money on every invocation. Until a
+  # key lives in repository secrets this is manual, and PROJECT.md 5b records
+  # the gap rather than the intention.
+  eval-baseline:
+    name: Scored eval run (G5) — manual
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync
+        run: uv sync --all-extras --dev
+
+      # Exits non-zero on a per-case regression against the committed baseline.
+      # A case that newly fails is the signal; the aggregate moving is not, and
+      # a suite that only watched the total would stay green while one class
+      # collapsed and another improved.
+      - name: Run against the committed baseline
+        run: uv run python -m evals.run --against evals/baseline/latest.json
         env:
-          DRY_RUN: "true"
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openrouter' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}
+          GOOGLE_GENAI_USE_VERTEXAI: "false"

@@ -149,8 +149,10 @@ class Agent:
         if verdict.blocked:
             trace.clinical_blocked = True
             trace.clinical_categories = tuple(c.value for c in verdict.categories)
-            if self.session.state not in {CallState.TRANSFER}:
-                self.session.transfer("clinical request refused")
+            # No state guard here: `transfer` is idempotent. The guard used to
+            # live at each call site, and the one place that forgot it crashed
+            # the call.
+            self.session.transfer("clinical request refused")
 
         self.history.append(Message(role="agent", text=spoken))
         trace.spoken_text = spoken
@@ -257,8 +259,7 @@ class Agent:
         state = self.session.state
 
         if tool_name == "transfer_to_human" and ok:
-            if state not in {CallState.TRANSFER}:
-                self.session.transfer("agent handed over to a human")
+            self.session.transfer("agent handed over to a human")
             return
 
         if not ok:

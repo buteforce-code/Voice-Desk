@@ -82,7 +82,7 @@ async def run(show_trace: bool, show_audit: bool) -> int:
         clinic_id=tenant.clinic_id,
         call_id=uuid4(),
         trace_id=f"chat-{uuid4().hex[:8]}",
-        versions=VersionStamp("prompt-2026-08-19", settings.llm_model),
+        versions=VersionStamp("prompt-2026-08-21", settings.llm_model),
         dry_run=False,
     )
     agent = Agent(

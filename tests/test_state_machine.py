@@ -393,3 +393,46 @@ def test_dry_run_defaults_to_true(session: CallSession) -> None:
 def test_speculation_is_opt_in_per_call(session: CallSession) -> None:
     assert session.tool_context().speculative is False
     assert session.tool_context(speculative=True).speculative is True
+
+
+# --------------------------------------------------------------------------
+# Transferring a call that is already transferring
+# --------------------------------------------------------------------------
+#
+# Found by the eval suite, not by this file. The model called
+# transfer_to_human, then kept calling tools until the round budget ran out,
+# and Agent._run_model_rounds transferred again on the way out. transition_to
+# refuses any move out of a terminal state, so it raised StateError, which
+# propagated through Agent.turn and killed the call.
+#
+# In production that is a dropped line on a caller who was one second from
+# reaching a person -- and it is invisible in a transcript, because there is no
+# transcript.
+
+
+def test_transferring_an_already_transferring_call_is_a_no_op(session: CallSession) -> None:
+    first = session.transfer("caller asked for a human")
+
+    again = session.transfer("model did not settle within the tool-round budget")
+
+    assert session.state is CallState.TRANSFER
+    assert again is first
+
+
+def test_the_second_transfer_adds_no_transition(session: CallSession) -> None:
+    """The audit trail must not show a handover that did not happen."""
+    session.transfer("caller asked for a human")
+    before = len(session.transitions)
+
+    session.transfer("and again")
+
+    assert len(session.transitions) == before
+
+
+def test_transfer_is_still_refused_from_a_finished_call(session: CallSession) -> None:
+    """Idempotence covers TRANSFER only. A call that reached `wrap` is done,
+    and transferring it is a real error rather than a no-op."""
+    advance_to(session, CallState.WRAP)
+
+    with pytest.raises(StateError):
+        session.transfer("too late")

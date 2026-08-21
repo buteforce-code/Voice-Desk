@@ -24,6 +24,9 @@ tool answers which question.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from voicedesk.state import CallState
 from voicedesk.tenants import Tenant
 
@@ -134,6 +137,7 @@ def system_prompt(
     state: CallState,
     language: str = "en-IN",
     identity_verified: bool = False,
+    now: datetime | None = None,
 ) -> str:
     """Assemble the prompt for one turn.
 
@@ -146,6 +150,7 @@ def system_prompt(
         language=LANGUAGE_NAMES.get(language, "Indian English"),
     )
 
+    prompt += f"\nWHEN IT IS\n- {_clock_line(tenant, now)}\n"
     prompt += f"\nWHERE THE CALL IS\n- {_STATE_HINTS.get(state, '')}\n"
 
     if identity_verified:
@@ -164,6 +169,40 @@ def system_prompt(
         f"Escalate to a human by calling `transfer_to_human`.\n"
     )
     return prompt
+
+
+def _clock_line(tenant: Tenant, now: datetime | None) -> str:
+    """Today's date and time, in the clinic's timezone.
+
+    Supplied rather than inferred, and this is a fact the system holds rather
+    than a nudge about how to behave. The distinction matters because prompts
+    are not where controls live -- but a receptionist who does not know what
+    day it is cannot resolve "tomorrow morning", and the model was previously
+    guessing.
+
+    The first eval run showed it guessing wrong: asked for tomorrow on the
+    21st, it searched the 23rd, found nothing, and told the caller there were
+    no slots tomorrow -- while two slots it had already offered sat on the
+    22nd. `find_slots` returns absolute UTC timestamps and nothing anywhere
+    named the present, so no amount of reasoning could have got it right.
+
+    Same category as the slot-seeding timezone bug: the system knew a fact, did
+    not give it to the agent, and the agent was blamed for the gap.
+    """
+    at = (now or datetime.now(UTC)).astimezone(_zone(tenant.timezone))
+    return (
+        f"Right now it is {at:%A %d %B %Y, %I:%M %p} in {tenant.timezone}. "
+        f"All times you say or hear are clinic-local. Resolve 'today', "
+        f"'tomorrow' and weekday names against this, and never against a slot "
+        f"list you happen to be holding."
+    )
+
+
+def _zone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):  # pragma: no cover - config validates this
+        return ZoneInfo("UTC")
 
 
 def disclosure_line(tenant: Tenant, language: str = "en-IN") -> str:

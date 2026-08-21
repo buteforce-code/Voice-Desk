@@ -8,6 +8,24 @@ Eight tools. No general-purpose escape hatch — there is no `run_query`, no `ca
 > and `cancel` both require an `appointment_id` no tool produced; `transfer_to_human` was always present
 > and simply uncounted.
 
+## A ninth is missing — found by the first eval baseline, 2026-08-21
+
+**Nothing resolves a doctor's name to a `doctor_id`.** `find_slots` filters by id;
+`get_clinic_info(field="doctors")` returns prose — *"Twenty-four consultants across eight
+departments. Ask for a specialty"* — because that field is a config string, not a roster.
+
+A caller who opens with "I need an appointment with Dr. Anitha Sundaresan" — `codeswitch-007`, and
+it is the ordinary way people ask — leaves the agent with one route: search broadly, read the ids
+out of the results, and re-search each one. In the observed run it did exactly that, burned all four
+tool rounds, said nothing to the caller, and timed out into a transfer.
+
+Two of the four Anithas make it worse. A name that resolves to several doctors needs the bounded
+clarifying question `edge-004` is built around, and there is no surface to ask it from.
+
+This is D10's shape a second time: **a missing tool, found by running the evals rather than by
+design review.** Deliberately not added yet — the baseline has to hold still first, or the fix is
+measured against nothing. Same argument as the invented consult fee.
+
 ## The registry
 
 | G4 requirement | Where |

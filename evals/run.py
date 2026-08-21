@@ -1,25 +1,31 @@
 """Eval harness.
 
-Two modes, and the first one works today:
-
     python -m evals.run --validate
         Load every case, check it against schema.py, check IDs are unique and
         match their directory, check the malicious slice actually asserts
-        violations. Exit non-zero on any problem.
+        violations. No model, no key, no network. Runs in CI.
 
-    python -m evals.run --baseline evals/baseline/latest.json
-        Drive the agent through every case and score against the baseline.
-        Blocked until the pipeline exists; scoring shape is defined here so the
-        cases being written now are already scoreable.
+    python -m evals.run --run [--class malicious] [--case normal-001] [--limit N]
+        Drive the agent through the cases and print a scored report. Real
+        model, real tool calling, real state machine. Costs money and time.
+
+    python -m evals.run --run --write-baseline evals/baseline/latest.json
+        Same, and commit the result as the baseline.
+
+    python -m evals.run --against evals/baseline/latest.json
+        Run and diff against a committed baseline. Exits non-zero on a
+        per-case regression, which is what makes it usable as a gate.
 
 `--validate` is what makes parallel case authoring safe: six authors write
-independently, and this decides whether what came back is conformant.
+independently, and this decides whether what came back is conformant. It stays
+separate from `--run` because it must be runnable on a bare checkout -- a check
+that needs an API key is a check that gets skipped exactly when it matters.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import asyncio
 import re
 import sys
 from collections import defaultdict
@@ -28,7 +34,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
-from evals.schema import CaseClass, EvalCase, Violation
+from evals.schema import CaseClass, EvalCase, Fault, Violation
 
 CASES_DIR = Path(__file__).parent / "cases"
 SCHEDULING_SRC = Path(__file__).parent.parent / "src" / "voicedesk" / "tools" / "scheduling.py"
@@ -150,6 +156,19 @@ def check_invariants(cases: list[EvalCase]) -> list[str]:
         if v not in probed:
             problems.append(f"no case probes violation '{v.value}' — detector untested")
 
+    # Every fault must be either exercised by a case or declared
+    # unimplemented. Same argument as the violation check above: a fault the
+    # harness can produce and nothing triggers is untested harness code that
+    # reads as coverage. Declaring the omission is cheap; discovering it when a
+    # case silently stops testing anything is not.
+    declared = {f for c in cases for f in c.inject}
+    for fault in Fault:
+        if fault not in declared and fault not in _unimplemented_faults():
+            problems.append(
+                f"fault '{fault.value}' is neither injected by any case nor listed "
+                f"in evals.faults.UNIMPLEMENTED — implement it or declare it absent"
+            )
+
     # A code-switch case that never switches language is mislabelled.
     for c in by_class.get(CaseClass.CODESWITCH, []):
         langs = {t.language for t in c.turns if t.language}
@@ -161,6 +180,21 @@ def check_invariants(cases: list[EvalCase]) -> list[str]:
             )
 
     return problems
+
+
+def _unimplemented_faults() -> frozenset[Fault]:
+    """Imported lazily so `--validate` keeps working without the runtime.
+
+    `evals.faults` imports the adapters, which import the tool schemas. That is
+    fine in a synced environment and not fine on the bare checkout this command
+    is supposed to run on, so a failure to import is treated as an empty set --
+    which makes the check stricter, never looser.
+    """
+    try:
+        from evals.faults import UNIMPLEMENTED
+    except ImportError:  # pragma: no cover - bare checkout
+        return frozenset()
+    return UNIMPLEMENTED
 
 
 def _looks_mixed(text: str) -> bool:
@@ -200,39 +234,193 @@ def cmd_validate() -> int:
     return 0
 
 
-def cmd_baseline(path: str) -> int:
+async def cmd_run(
+    *,
+    only_class: str | None,
+    only_case: str | None,
+    limit: int | None,
+    write_baseline: str | None,
+    against: str | None,
+    version: str,
+    concurrency: int = 4,
+    repeats: int = 1,
+) -> int:
+    """Score the suite against a live model.
+
+    Imported lazily and locally: `--validate` must keep working on a checkout
+    with neither the runtime nor a key installed, and a module-level import of
+    the driver would take that away.
+    """
+    from evals.report import build_baseline, diff, load_baseline, print_results
+    from evals.report import write_baseline as commit
+    from voicedesk.config import ConfigError, Settings
+    from voicedesk.llm import build_from_settings
+
     cases, errors = load_cases()
     if errors:
         print("Cases do not validate; fix those before scoring.", file=sys.stderr)
         return cmd_validate()
 
-    baseline_path = Path(path)
-    if not baseline_path.exists():
+    cases = _select(cases, only_class=only_class, only_case=only_case, limit=limit)
+    if not cases:
+        print("No cases matched the selection.", file=sys.stderr)
+        return 1
+
+    try:
+        settings = Settings.load()
+    except ConfigError as exc:
+        print(f"Configuration refused: {exc}", file=sys.stderr)
+        return 2
+
+    model = build_from_settings(settings)
+    if model is None:
         print(
-            f"No baseline at {path}.\n"
-            f"Expected — a baseline is committed only once the pipeline can "
-            f"produce one. {len(cases)} cases are ready and conformant.",
+            "No model configured. Set GOOGLE_AI_API_KEY or OPENROUTER_API_KEY in .env.\n"
+            "A baseline produced against a stubbed model would be a number about the stub.",
             file=sys.stderr,
         )
-        return 0
+        return 2
 
-    _ = json.loads(baseline_path.read_text(encoding="utf-8"))
-    print(
-        "Scoring requires the pipeline (G5 completion). "
-        f"{len(cases)} cases loaded and conformant.",
-        file=sys.stderr,
+    results = await _drive(cases, model, settings.llm_model, concurrency, repeats)
+
+    expected = {c.id: c.expect.outcome for c in cases}
+    baseline = build_baseline(
+        results,
+        expected,
+        version=version,
+        prompt_version="prompt-2026-08-21",
+        model_version=settings.llm_model,
+        concurrency=concurrency,
+        repeats=repeats,
     )
-    return 0
+    print_results(results, baseline)
+
+    exit_code = 0
+    if against:
+        path = Path(against)
+        # Blocking file IO in an async function. This is a CLI reading one
+        # small JSON file once, not a server: the alternative is an async
+        # filesystem dependency the project does not otherwise need.
+        if not path.exists():  # noqa: ASYNC240
+            print(f"No baseline at {against} to compare against.", file=sys.stderr)
+            return 1
+        previous, prior_cases = load_baseline(path)
+        exit_code = diff(previous, prior_cases, results, repeats)
+
+    if write_baseline:
+        target = Path(write_baseline)
+        commit(baseline, results, target)
+        print(f"\n baseline written to {target}")
+
+    return exit_code
+
+
+async def _drive(
+    cases: list[EvalCase],
+    model: object,
+    model_version: str,
+    concurrency: int,
+    repeats: int = 1,
+) -> list[object]:
+    """Run cases concurrently, bounded, `repeats` times each.
+
+    Concurrency is safe because each case gets its own world -- tenant,
+    calendar, registry, audit log, session -- and shares nothing but the model
+    client. That isolation was built for correctness (a reused adapter makes the
+    second case double-book) and it buys this for free.
+
+    It is also the difference between a suite that runs on every change and one
+    that does not. Sequentially, 58 cases against a 6s-per-turn model is over
+    two hours; nobody runs that before a commit, and a gate nobody runs is not
+    a gate.
+
+    Bounded rather than unbounded: providers rate-limit, and a 429 storm turns
+    every case into a crash-void, which reads as a catastrophic regression.
+
+    `repeats` is why this exists at all rather than being a for-loop. The first
+    two baselines disagreed on 11 of 58 verdicts with nothing changed between
+    them, so one run per case is a snapshot and not a measurement. Repeats of
+    the SAME case run concurrently with each other, so raising it costs wall
+    clock roughly in proportion to how far it exceeds the concurrency limit.
+    """
+    from evals.driver import run_case
+    from evals.merge import merge
+    from evals.score import score
+
+    gate = asyncio.Semaphore(max(1, concurrency))
+    done = 0
+    total = len(cases) * repeats
+
+    async def one(case: EvalCase) -> object:
+        nonlocal done
+        async with gate:
+            record = await run_case(case, model, model_version=model_version)  # type: ignore[arg-type]
+            result = score(case, record)
+        done += 1
+        print(f"  [{done}/{total}] {case.id}", file=sys.stderr, flush=True)
+        return result
+
+    async def repeated(case: EvalCase) -> object:
+        runs = await asyncio.gather(*(one(case) for _ in range(repeats)))
+        return merge(list(runs))  # type: ignore[arg-type]
+
+    # Results come back in CASE order regardless of completion order, so two
+    # printed reports are line-comparable.
+    return list(await asyncio.gather(*(repeated(c) for c in cases)))
+
+
+def _select(
+    cases: list[EvalCase],
+    *,
+    only_class: str | None,
+    only_case: str | None,
+    limit: int | None,
+) -> list[EvalCase]:
+    selected = sorted(cases, key=lambda c: c.id)
+    if only_class:
+        selected = [c for c in selected if c.case_class.value == only_class]
+    if only_case:
+        selected = [c for c in selected if c.id == only_case]
+    if limit:
+        selected = selected[:limit]
+    return selected
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="evals.run")
     ap.add_argument("--validate", action="store_true", help="validate cases only")
-    ap.add_argument("--baseline", metavar="PATH", help="score against a baseline")
+    ap.add_argument("--run", action="store_true", help="drive the agent and score")
+    ap.add_argument("--class", dest="only_class", metavar="CLASS", help="one case class")
+    ap.add_argument("--case", dest="only_case", metavar="ID", help="one case id")
+    ap.add_argument("--limit", type=int, metavar="N", help="first N cases")
+    ap.add_argument("--write-baseline", metavar="PATH", help="commit the result")
+    ap.add_argument("--against", metavar="PATH", help="diff against a committed baseline")
+    ap.add_argument("--version", default="v1", help="baseline version label")
+    ap.add_argument(
+        "--concurrency", type=int, default=4, metavar="N", help="cases in flight (default 4)"
+    )
+    ap.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="drive each case N times; a case passes only if it passes every time",
+    )
     args = ap.parse_args()
 
-    if args.baseline:
-        return cmd_baseline(args.baseline)
+    if args.run or args.write_baseline or args.against:
+        return asyncio.run(
+            cmd_run(
+                only_class=args.only_class,
+                only_case=args.only_case,
+                limit=args.limit,
+                write_baseline=args.write_baseline,
+                against=args.against,
+                version=args.version,
+                concurrency=args.concurrency,
+                repeats=args.repeat,
+            )
+        )
     return cmd_validate()
 
 
