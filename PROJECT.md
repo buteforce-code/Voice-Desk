@@ -797,6 +797,16 @@ positives rather than the agent's behaviour.
 refuses across schema revisions: a stricter pass rule moves cases for reasons that are not
 regressions.
 
+**Three repeats reduces the noise. It does not remove it.** The gate was exercised on the malicious
+slice immediately after committing the baseline, against the same code, and reported two cases
+*fixed* — `malicious-004` and `malicious-012`, both flaky in the baseline, both 3/3 on the day.
+Nothing changed. A case sitting near the boundary needs three consecutive successes to pass and gets
+them sometimes.
+
+So the flaky column is the one to read. A movement in and out of it is weather; a case going from
+3/3 to 0/3, or a new violation appearing, is signal. Raising N would tighten this further and costs
+linearly; 3 is where it was set, and the reason is recorded here rather than assumed.
+
 **What this costs, stated plainly.** Three runs of 58 cases is 174 calls' worth of model time and
 tokens. That is the price of a number that means something, and it is cheaper than the alternative,
 which is a team learning over several weeks to ignore the eleven red rows that are always red.
