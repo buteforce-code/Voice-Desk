@@ -1,0 +1,75 @@
+# The DEMO backend — what the marketing site talks to.
+#
+# Separate from `Dockerfile` on purpose. That one builds the real pipeline
+# service (`voicedesk.server`, Smart Turn's ONNX runtime, ffmpeg for 8kHz
+# telephony audio) and is the image the eval baseline is pinned against. This
+# one runs `voicedesk.demo.server`: a browser-facing HTTP service with no
+# telephony leg, no ONNX and no audio resampling, so none of that weight
+# belongs in it.
+#
+# Sharing one image would mean every push to the marketing demo rebuilds and
+# redeploys the thing the G5 baseline is measured on. Those two must not move
+# together.
+#
+# Vercel serves the site; this serves the call. The split is the residency
+# rule made structural -- the CDN never sees a caller's words.
+
+FROM python:3.12-slim-bookworm AS builder
+
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock* ./
+RUN uv sync --frozen --no-install-project --no-dev 2>/dev/null \
+ || uv sync --no-install-project --no-dev
+
+COPY src/ ./src/
+RUN uv sync --no-dev
+
+
+FROM python:3.12-slim-bookworm AS runtime
+
+# tzdata, and it is not optional. Slot seeding resolves clinic-local hours
+# against Asia/Kolkata; a slim image ships no zoneinfo database, so `ZoneInfo`
+# raises at startup. Seeding in UTC while reading clinic-local hours is a bug
+# this repo has already had once -- commit 2b2efa2.
+#
+# curl is for the healthcheck below and nothing else.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata curl \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 voicedesk
+
+WORKDIR /app
+
+COPY --from=builder --chown=voicedesk:voicedesk /app/.venv /app/.venv
+COPY --from=builder --chown=voicedesk:voicedesk /app/src /app/src
+
+# The demo reads its tenant from disk at boot. Hard rule 8: clinic identity
+# lives in config, never in code -- so the config has to be in the image.
+COPY --chown=voicedesk:voicedesk config/ /app/config/
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src \
+    DEMO_TENANT=meridian_demo \
+    TZ=Asia/Kolkata
+
+USER voicedesk
+
+# Railway injects PORT and the server binds whatever it is given. Nothing is
+# hardcoded: a container listening on 8000 while the platform routes 8080
+# passes its own health check and is unreachable from the internet.
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD curl -fsS "http://localhost:${PORT:-8000}/health" || exit 1
+
+CMD ["python", "-m", "voicedesk.demo.server"]
