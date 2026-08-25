@@ -65,6 +65,17 @@ class SchedulingAdapter(Protocol):
         """
         ...
 
+    async def find_doctors(
+        self, clinic_id: UUID, *, name: str | None, specialty: str | None
+    ) -> list[tuple[UUID, str, str]]:
+        """Returns (doctor_id, full_name, specialty) for active doctors.
+
+        `name` matches loosely -- see `FindDoctorsIn.name`. An implementation
+        that requires an exact string is a correct implementation of the wrong
+        contract: the input is a transcription of speech, not a database key.
+        """
+        ...
+
     async def hold_slot(
         self, clinic_id: UUID, slot_id: UUID, call_id: UUID, ttl_seconds: int
     ) -> datetime:
@@ -90,6 +101,13 @@ class SchedulingAdapter(Protocol):
         Must be safe against concurrent confirmation of the same slot — the
         partial unique index in 0001_init.sql makes the loser a constraint
         violation rather than a silent double-book.
+
+        **Must refuse a slot this `call_id` does not currently hold.** Which
+        slot a call may write is a server-side fact with a TTL, not a value
+        repeated back by a model: without this an agent that misreads one digit
+        of a UUID books a stranger's morning, and an agent talked into naming
+        another id books whatever it was told to. `hold_slot` is what earns the
+        write, so it is what the write is checked against.
         """
         ...
 

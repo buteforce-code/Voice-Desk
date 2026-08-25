@@ -34,10 +34,10 @@ import structlog
 
 from voicedesk.audit import InMemoryAudit
 from voicedesk.llm import LanguageModel, Message, ToolResult
-from voicedesk.prompts import disclosure_line, system_prompt
+from voicedesk.prompts import opening_line, system_prompt
 from voicedesk.safety.clinical import guard_agent_turn
 from voicedesk.security.fencing import fence, sanitize_utterance
-from voicedesk.state import CallSession, CallState, IdentityExhausted
+from voicedesk.state import TERMINAL, CallSession, CallState, IdentityExhausted
 from voicedesk.tenants import Tenant
 from voicedesk.tools.registry import ToolRegistry
 
@@ -117,8 +117,7 @@ class Agent:
 
     def open(self) -> str:
         """First agent turn. Disclosure is unconditional and comes first."""
-        line = disclosure_line(self.tenant, self.language)
-        greeting = f"{line} How can I help you today?"
+        greeting = opening_line(self.tenant, self.language)
         self.history.append(Message(role="agent", text=greeting))
         self.session.transition_to(
             CallState.IDENTIFY, "disclosure given, consent captured"
@@ -140,7 +139,25 @@ class Agent:
 
         self._advance_on_caller_turn(safe_text)
 
-        spoken = await self._run_model_rounds(trace)
+        spoken = await self._run_model_rounds(trace, safe_text)
+
+        # The utterance is handed down so consent can be re-read after every
+        # tool round.
+        #
+        # Consent used to be read ONLY before the model moved, which made the
+        # order of two events in one turn decide whether a call could ever be
+        # booked. A caller who picks a slot and agrees to it in one breath --
+        # "that's fine, book it", which is how `normal-001`, `normal-004` and
+        # most of the normal slice are written, because it is how people talk
+        # -- says their yes BEFORE the `hold_slot` that gives it a referent.
+        # `pending_write` was still False, the yes was discarded, and the agent
+        # spent the rest of the call asking a question already answered.
+        #
+        # Nothing about the control is relaxed: it is still the caller's own
+        # words, still matched in code, still refused unless exactly one slot
+        # is pinned, and negation still dominates. What changed is when the
+        # question is asked -- after the hold exists rather than before, which
+        # is the only point at which it can be answered honestly.
 
         # Output-side guard. The last thing before anything is spoken.
         spoken, verdict = guard_agent_turn(
@@ -149,6 +166,21 @@ class Agent:
         if verdict.blocked:
             trace.clinical_blocked = True
             trace.clinical_categories = tuple(c.value for c in verdict.categories)
+
+            # A write that happened must still be told to the caller.
+            #
+            # The guard replaces the whole utterance, and if the agent wandered
+            # into clinical territory in the same breath as confirming a
+            # booking, the caller heard only "I can't help with that, let me
+            # transfer you" -- while an appointment sat in the register in
+            # their name. They arrive, or they do not; either way nobody in the
+            # conversation knew it existed.
+            #
+            # The refusal is still the right thing to say. It is not the ONLY
+            # thing that needs saying.
+            if any(name in _WRITES and code == "ok" for name, code in trace.tool_calls):
+                spoken = f"{_booking_made(self.language)} {spoken}"
+
             # No state guard here: `transfer` is idempotent. The guard used to
             # live at each call site, and the one place that forgot it crashed
             # the call.
@@ -162,7 +194,7 @@ class Agent:
 
     # -- the model/tool cycle ---------------------------------------------
 
-    async def _run_model_rounds(self, trace: TurnTrace) -> str:
+    async def _run_model_rounds(self, trace: TurnTrace, caller_text: str = "") -> str:
         spoken = ""
         for _ in range(MAX_TOOL_ROUNDS):
             turn = await self.model.respond(
@@ -180,6 +212,26 @@ class Agent:
             if not turn.wants_tools:
                 return spoken
 
+            # The agent's own decision, recorded before its consequences.
+            #
+            # This message used to be skipped entirely, and the omission is
+            # what held booking accuracy at zero. The model saw its tool
+            # RESULTS but never saw that it had asked for them, so a slot_id
+            # arrived in the transcript attached to nothing -- no turn in which
+            # the agent had chosen to look slots up. On the next utterance it
+            # could not tell which of the ids in front of it, if any, it had
+            # committed to, and it asked the caller to disambiguate instead of
+            # calling `hold_slot`. `normal-001` shows it asking the identical
+            # question three times while the caller repeats "book it".
+            #
+            # `text` is deliberately empty: only ONE utterance per turn reaches
+            # the caller, and `turn()` appends it. Recording intermediate model
+            # chatter here would put words in the history that were never
+            # spoken on the call.
+            self.history.append(
+                Message(role="agent", tool_calls=turn.tool_calls)
+            )
+
             results: list[ToolResult] = []
             for call in turn.tool_calls:
                 result = await self.registry.invoke(
@@ -196,11 +248,53 @@ class Agent:
                             if result.ok
                             else {"error": code, "message": result.error_message}
                         ),
+                        # Paired to the call that asked for it. An
+                        # OpenAI-compatible endpoint rejects a result whose id
+                        # matches no preceding call.
+                        call_id=call.call_id,
                     )
                 )
                 self._advance_on_tool(call.name, result.ok)
 
             self.history.append(Message(role="tool", tool_results=tuple(results)))
+
+            # Re-read consent now, not after the last round. A model that holds
+            # a slot asks to write it on the very next round -- that is the
+            # natural shape, and it is what the live traces do. Evaluating only
+            # once the rounds are over left the session in `draft` for the
+            # whole turn, so the write was refused as `not_authorized` and the
+            # booking slipped to the following utterance, with a spurious
+            # refusal in the transcript on the way.
+            self._advance_on_caller_turn(caller_text)
+
+            if self.session.state in TERMINAL:
+                # The call ended inside this turn -- booked and wrapped, or
+                # handed to a person. No further ROUND runs: this is where the
+                # crash came from. A turn that reached `wrap` kept looping, the
+                # model called `transfer_to_human`, and `_advance_on_tool`
+                # transferred a terminated session, which raised and killed the
+                # call one instruction after the appointment was written. The
+                # guard in `state.py` stops the crash; this stops the round
+                # that provokes it.
+                #
+                # The call ended inside this turn. The agent must still SPEAK
+                # -- a booking confirmed in silence is what the caller hears as
+                # a dropped line -- but it must no longer ACT. One more round
+                # with no tools offered: it can say "you're booked for Saturday
+                # at nine", and there is nothing it can call.
+                if not spoken:
+                    closing = await self.model.respond(
+                        system=system_prompt(
+                            self.tenant,
+                            state=self.session.state,
+                            language=self.language,
+                            identity_verified=self.session.identity_verified,
+                        ),
+                        history=self.history,
+                        tools=[],
+                    )
+                    spoken = closing.text or spoken
+                return spoken
 
         log.warning("agent.tool_rounds_exhausted", trace_id=self.session.trace_id)
         self.session.transfer("model did not settle within the tool-round budget")
@@ -218,8 +312,15 @@ class Agent:
             # in-memory demo has no patient records to check against, so this
             # accepts a well-formed date. Marked clearly because it is the one
             # place in the system where a control is weaker than it looks.
+            ani = self.session.ani
+            if not ani:
+                # No ANI, no subject. Verifying against a stand-in number would
+                # scope every later lookup to a patient who does not exist, and
+                # the call would read as verified while looking at nothing.
+                self.session.transfer("no ANI on this leg; identity unverifiable")
+                return
             try:
-                self.session.verify_identity(_caller_msisdn(self.session))
+                self.session.verify_identity(ani)
             except IdentityExhausted:  # pragma: no cover - defensive
                 return
             self.session.transition_to(CallState.RESEARCH, "identity verified")
@@ -265,6 +366,29 @@ class Agent:
         if not ok:
             return
 
+        if tool_name == "find_slots" and state is CallState.IDENTIFY:
+            # Searching for a slot IS the research step, and it is only ever
+            # done for a NEW booking -- which needs no prior identity.
+            #
+            # This used to depend entirely on `_wants_new_booking`, a phrase
+            # list matching "book", "appointment" and "see a/the doctor". It
+            # does not match "I'd like to see a dermatologist", or a
+            # cardiologist, or any of the other seven specialties, so an
+            # ordinary opening sentence left the call in `identify`. The model
+            # then called `find_slots` from the wrong state, the RESEARCH ->
+            # DRAFT edge below never fired, `hold_slot` could not set
+            # `pending_write`, and the write was refused on a call where the
+            # caller had done nothing wrong. The machine ran a full turn behind
+            # the conversation.
+            #
+            # Advancing on the tool rather than the phrasing costs no identity
+            # guarantee: `find_appointments` is identity-gated in the registry,
+            # server-side, whatever state the call is in. Nothing here can
+            # reach an existing patient's data.
+            self.session.transition_to(CallState.RESEARCH, "find_slots: a new booking")
+            self.session.transition_to(CallState.DRAFT, "find_slots returned")
+            return
+
         if tool_name in {"find_slots", "find_appointments"} and state is CallState.RESEARCH:
             self.session.transition_to(CallState.DRAFT, f"{tool_name} returned")
             return
@@ -296,6 +420,30 @@ class Agent:
 # --------------------------------------------------------------------------
 
 
+_WRITES = frozenset(
+    {"confirm_booking", "reschedule_appointment", "cancel_appointment"}
+)
+
+_BOOKING_MADE = {
+    "en-IN": "That change has gone through.",
+    "ta-IN": "அந்த மாற்றம் பதிவாகிடுச்சு.",
+    "hi-IN": "वह बदलाव हो गया है।",
+}
+
+
+def _booking_made(language: str) -> str:
+    """Deliberately vague about WHAT changed.
+
+    The guard blocked this turn because the agent said something it should not
+    have, and the details it was in the middle of reading out are exactly the
+    text under suspicion. Repeating them would defeat the block. Saying that
+    something was recorded, and letting the transfer carry the specifics to a
+    person, is the honest middle: the caller is not left believing nothing
+    happened, and no unreviewed sentence reaches them.
+    """
+    return _BOOKING_MADE.get(language, _BOOKING_MADE["en-IN"])
+
+
 _DOB = re.compile(
     r"\b\d{1,2}[/\-. ]\d{1,2}[/\-. ]\d{2,4}\b"
     r"|\b\d{1,2}(?:st|nd|rd|th)?\s+"
@@ -319,11 +467,4 @@ def _wants_new_booking(text: str) -> bool:
     return bool(_NEW_BOOKING.search(text))
 
 
-def _caller_msisdn(session: CallSession) -> str:
-    """ANI for this call.
 
-    Carried on the session by the telephony layer. Until that exists the demo
-    supplies it explicitly; `verified_msisdn` is never taken from model output
-    either way.
-    """
-    return getattr(session, "ani", None) or "+919876543210"

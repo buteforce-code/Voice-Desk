@@ -429,10 +429,35 @@ def test_the_second_transfer_adds_no_transition(session: CallSession) -> None:
     assert len(session.transitions) == before
 
 
-def test_transfer_is_still_refused_from_a_finished_call(session: CallSession) -> None:
-    """Idempotence covers TRANSFER only. A call that reached `wrap` is done,
-    and transferring it is a real error rather than a no-op."""
-    advance_to(session, CallState.WRAP)
+def test_transfer_after_a_finished_call_is_a_no_op_not_a_crash(
+    session: CallSession,
+) -> None:
+    """This asserted the opposite until 2026-08-21, and the eval suite is what
+    changed it.
 
-    with pytest.raises(StateError):
-        session.transfer("too late")
+    The old rule -- idempotence covers TRANSFER only, `wrap` raises -- was
+    written when no call had ever booked, so `wrap` was unreachable and the
+    rule was free. The moment bookings started succeeding, the second baseline
+    run produced this sequence inside a single turn:
+
+        confirm_booking ok -> execute -> audit -> wrap
+        transfer_to_human ok -> session.transfer() -> StateError -> call dies
+
+    `transfer_to_human` is AUTONOMOUS and never blocked, so the model can
+    always reach it, including one round after the appointment was written.
+    Raising there drops the line on a caller whose booking has just been
+    committed: the row is in the register, they hear nothing, and the
+    transcript ends mid-call. Clean in the database, broken to the human.
+
+    A transfer after the end is still a bug and still must be visible -- it
+    logs `call.transfer_after_end` and adds no transition, so the audit trail
+    never shows a handover that did not happen. What it must not be is fatal.
+    """
+    advance_to(session, CallState.WRAP)
+    before = len(session.transitions)
+
+    last = session.transfer("too late")
+
+    assert session.state is CallState.WRAP, "a finished call must not move"
+    assert len(session.transitions) == before, "audit shows a handover that did not happen"
+    assert last is session.transitions[-1]

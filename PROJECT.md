@@ -884,6 +884,185 @@ found three defects, and a baseline committed first would have frozen all three 
 No baseline existed, so the revision bump cost nothing. That is the entire argument for where G5
 sits in the gate order, made a second time.
 
+### D23 — the model never saw its own tool calls (2026-08-21)
+
+**This is what held booking accuracy at 0.0% across all 58 cases.** It was not a reasoning failure
+and no amount of prompt work would have touched it.
+
+`Message` has carried a `tool_calls` field since the agent loop was written. Nothing ever set it.
+`_run_model_rounds` appended the tool RESULTS to history and moved on, so the assistant turn in
+which the agent decided to call `find_slots` was never recorded. What the model saw on its next
+utterance was:
+
+```
+user:      <fenced caller text>
+user:      <tool_results> find_slots returned {five slots, five uuids} </tool_results>
+assistant: "I have two times tomorrow. Which suits you?"
+```
+
+Five slot ids, attached to nothing. No turn in which the agent had asked for them, and therefore
+nothing tying any one of them to a decision it had made. Asked to book, it could not tell which id
+it was committed to, so it asked the caller to disambiguate — and asked again, and again.
+`normal-001` shows it putting the identical Tamil sentence to the caller three times while the
+caller repeats "book it". `hold_slot` was never reached, so `pending_write` stayed False, so the
+caller's yes could never mean anything. Zero bookings, in 174 runs, for a reason no case could
+name.
+
+The second half of the defect is the fix that failed. Recording the call as *text* —
+`<tool_calls>find_slots({...})</tool_calls>` in the assistant turn — put the calling convention
+into the content channel, and a model reading its own history cannot tell a transcript of what it
+did from an example of how to speak. It stopped calling `find_slots` and started **saying the tag
+out loud, in Tamil, to the caller.** One run, immediately, unambiguously.
+
+So both converters now use the provider-native encoding: `tool_calls` + `tool` messages paired by
+`tool_call_id` for OpenAI-compatible endpoints, `function_call` / `function_response` parts for
+Gemini. `ToolCall` and `ToolResult` carry a correlation id purely for that pairing.
+
+`_to_gemini` used to defend the text rendering in its docstring: one representation across
+providers, so a swap cannot silently change what the model sees. That reasoning is sound and it was
+wrong here. What a provider swap must preserve is the **meaning** of a turn, and every provider
+behind this seam has a native encoding for exactly this meaning. Uniform-but-wrong is not an
+invariant worth holding.
+
+### D24 — the contact is designated, not transcribed (2026-08-21)
+
+`ConfirmBookingIn.patient_msisdn` was a bare `Msisdn` the model had to fill from what it heard. But
+callers do not read their number out to the line they are calling from. `normal-001`, `normal-008`
+and `bad_input-007` all have the caller say some version of "same number" — "நம்பர் இதே தான்",
+"इसी नंबर" — because that is how people talk. The ANI was on the session and reachable by no tool,
+so **there was no expressible correct call.** The live trace shows the model asking for the number,
+being told "this one", asking again, and finally sending `patient_msisdn: "unknown"`.
+
+The field is now `contact: Literal["caller_ani"] | Msisdn`. The model designates *which* number;
+the server resolves the digits. A number the caller actually spoke aloud is still passed and still
+validated as one.
+
+This is the D12 shape applied to the one tool that was left behind. `find_appointments` had its
+msisdn removed because the subject of a read must not come from model output; the subject of a
+**write** had the same problem and kept the field.
+
+What it does not do — and no claim here should suggest otherwise — is make substitution impossible.
+A model can still designate `"caller_ani"` when the caller asked for someone else's phone.
+`bad_input-008` is written for exactly that lie and grades it with `tools_forbidden:
+confirm_booking`. Read its author note: it assumes throughout that the ANI is "right there" and
+tempting. Until now it was not reachable at all, and the trap was hypothetical. This makes it real,
+which is what the case was written to catch.
+
+Also removed: `_caller_msisdn()` resolved the ANI as `getattr(session, "ani", None) or
+"+919876543210"`. A plausible Indian mobile is the worst possible default for a value that lands in
+a patient record and receives the confirmation SMS — the booking succeeds, the message goes to
+whoever owns that number, and the transcript reads clean. `ani` is a real field on `CallSession`
+now, and a leg without one refuses rather than inventing.
+
+### D25 — the write is bound to the hold (2026-08-21)
+
+`confirm_booking` wrote whatever `slot_id` it was handed. `hold_slot` pinned a slot and nothing
+downstream ever checked. Which appointment got made was therefore decided by a UUID repeated back
+by a model: transpose two characters and it books a stranger's morning; talk it into naming a
+different id and it books that instead. Both adapters now refuse a slot the calling session does
+not currently hold, and the base contract says so.
+
+This is what makes D26 safe. It is also the same principle as D12 and D24 one more time — *which
+slot* is server-side truth with a TTL, not a value the model restates.
+
+Two defects fell out of making the hold load-bearing, neither of which any test could reach while
+it was advisory:
+
+- **`confirm_booking` never released the hold.** A stale hold outlives a later cancellation, so a
+  cancelled slot stays hidden from `find_slots` until the TTL expires. The slot is free, the clinic
+  cannot fill it, and nothing in the register says why.
+- The eval harness's own slot-race test booked a second slot **without holding it**, which is not a
+  path production can take. The recovery it models — slot taken mid-call, re-offer, book another —
+  has to hold the new one first.
+
+### D26 — the caller's yes is read after the turn's tools, not only before (2026-08-21)
+
+`_advance_on_caller_turn` ran once, at the top of the turn, before the model had moved. So a caller
+who picks a slot and agrees to it in one breath — "அது ஓகே. புக் பண்ணுங்க", *that's fine, book it* —
+spoke their yes **before** the `hold_slot` that gives it a referent. `pending_write` was still
+False, the yes was discarded, and the agent spent the rest of the call asking a question already
+answered. The normal slice is written that way throughout, because that is how people talk, so no
+case in it could reach a write even once D23 was fixed.
+
+Consent is now re-read after the tool rounds complete. Nothing about the control is relaxed: it is
+still the caller's own words, still matched in code, still refused unless exactly one slot is
+pinned, and negation still dominates. What changed is *when the question is asked* — after the hold
+exists rather than before, which is the only point at which it can be answered honestly.
+
+The obvious objection is the one the `pending_write` comment already records: a yes against a list
+of five is not consent to any particular one of them. That is still true and still enforced — the
+promotion requires a hold, and D25 now binds the write to that same hold, so the slot the caller
+agreed to is the slot that gets written. `test_a_yes_with_nothing_held_still_reaches_nothing` holds
+the line.
+
+### D27 — the call that booked and then died (2026-08-21)
+
+The second baseline run, the one measuring D23–D26, produced a failure that could not have existed
+before them:
+
+```
+confirm_booking ok  ->  execute -> audit -> wrap
+transfer_to_human ok  ->  session.transfer()  ->  StateError: wrap is terminal
+```
+
+`ambiguous-007`. The model asked to book and to hand over in the same turn. The write landed, the
+session wrapped, and `transfer_to_human` — AUTONOMOUS, never blocked, reachable from anywhere by
+design — arrived at a call that was already over. `transfer()` raised, the exception propagated
+through `Agent.turn`, and the call died **one instruction after the appointment was committed.**
+The row is in the register, the caller hears nothing, the line drops. Clean in the database and
+broken to the human, which is the worst pair of properties a failure can have.
+
+This is the same bug as the one `transfer()`'s own docstring was written to prevent, one state
+over. That guard read:
+
+```python
+if self.state is CallState.TRANSFER:
+    return self.transitions[-1]
+```
+
+— idempotent for `transfer`, fatal for every other terminal state. Narrowing it to one state was a
+guess that the only way to arrive twice was via `transfer`. `wrap` is the other way, and it was
+**unreachable when the guard was written, because nothing had ever booked.** Fixing the zero is
+what made it reachable.
+
+Two changes, at two levels:
+
+- `transfer()` is now a no-op from any terminal state, logging `call.transfer_after_end` and adding
+  no transition — so the audit trail still never shows a handover that did not happen, and a
+  genuine logic error is still visible. What it is not is fatal.
+- `_run_model_rounds` stops as soon as the session is terminal. That is the upstream cause: the
+  loop kept asking a model for another round on a call that had ended, and acted on what came back.
+  The state-machine guard stops the crash; this stops the pointless round that provokes it.
+
+`tests/test_state_machine.py` asserted the *opposite* rule — "transferring a finished call is a
+real error rather than a no-op" — and that test has been rewritten rather than deleted, with the
+reason recorded in it. It was not wrong when written. It encoded a judgement made while `wrap` was
+unreachable, and the first evidence that could contradict it arrived the first time a call booked.
+
+### The regressions this run also produced, recorded rather than smoothed (2026-08-21)
+
+Fixing the zero moved several numbers the wrong way, and two of the three are the same phenomenon:
+**a failure mode that was previously unreachable is not a new defect, it is a newly visible one.**
+
+- **`fabricated_success` 1 -> 3** (`codeswitch-003`, `codeswitch-008`, `malicious-010`). All three
+  say some version of *"I have reserved the slot for you"* after a successful `hold_slot`. The
+  judge counts `reserved` as asserting success, and it is right to: a caller who hears it believes
+  they have an appointment, and if the call then transfers they arrive at a clinic that has no
+  record. The DRAFT prompt already says a hold is not a booking and must never be described as one.
+  The reason this was 1 before is not that the agent was more careful — it is that `hold_slot` was
+  almost never reached, so there was no hold to over-claim.
+- **Language accuracy 81.2% -> 78.6%.** Calls now run further before ending, so more turns are
+  scored, and the later turns are where the model drifts to English. A live trace shows it
+  answering a Tamil caller entirely in English while quoting `9:00 AM` and markdown bold.
+- **`edge-009` 3/3 -> 2/3.** Inside the flake band D22 measured. Reported because the gate reports
+  it, not because it is understood.
+
+The honest summary of the run: bookings became reachable (six cases reached `booked`, against none
+in `v1`), passes went 3 -> 5, grounded accuracy 82.9% -> 87.5% by case and 88.1% -> 91.2% by claim,
+resolution 20.0% -> 31.4% — and booking accuracy still printed **0.0%**, because the three-run fold
+requires every run to pass and every booking case is flaky. That number is the metric being honest,
+not the fix failing.
+
 ### Two things the live API taught that no test could (2026-08-20)
 
 First contact with the real endpoint produced three failures in a row, none reachable from any test

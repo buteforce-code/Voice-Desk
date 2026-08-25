@@ -38,8 +38,10 @@ intake → research → draft → validate → approval → execute → audit
 2. **`execute` is reachable only from `approval`.** No other edge exists. This is the single most important invariant in the system.
    Implemented in `state.py`: asserted over the edge table, again at import time (so a shortcut stops the process from starting), and enforced by `registry._authorize`, which requires `state == execute` **plus** the approval token. Requiring only the token would leave the graph decorative; requiring only the state would let any path in. See PROJECT.md D13.
 3. **`draft` never writes.** A draft is a struct in memory plus a row in `call_turns`. If the call drops in `draft`, nothing happened.
-4. **Slot holds are not bookings.** `research` may place a short TTL hold to prevent a race; the hold expires on its own and is released on `abandoned` / `failed`.
+4. **Slot holds are not bookings — and a booking requires one.** A short TTL hold prevents a race; it expires on its own, is released on `abandoned` / `failed`, and is cleared once the appointment exists (the appointment is the stronger claim; a stale hold hides a slot a later cancellation freed).
+   Since 2026-08-21 the hold is also *load-bearing*: `confirm_booking` refuses any slot this call does not currently hold, so which appointment gets made is a server-side fact with a TTL rather than a UUID the model repeated back. See PROJECT.md D25.
 5. **Every transition records** `from_state`, `to_state`, `reason`, `at`, and the prompt/model/tool versions in force.
+6. **The caller's yes is read twice per turn — before the model moves, and after its tools have run.** Consent is detected in code from the caller's own words, and a hold is what gives those words a referent. Reading only at the top of the turn made the *order of two events inside one turn* decide whether a call could be booked at all: a caller who picks a slot and agrees to it in one breath speaks their yes before the `hold_slot` that pins it, and the yes was discarded. Nothing about the control is weaker — same words, same code, still refused unless exactly one slot is pinned, negation still dominant. See PROJECT.md D26.
 
 ## Diagram
 

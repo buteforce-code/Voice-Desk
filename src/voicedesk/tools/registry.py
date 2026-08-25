@@ -354,7 +354,13 @@ def _idempotency_key(args: BaseModel, ctx: ToolContext, spec: ToolSpec) -> str:
     return f"{ctx.trace_id}:{spec.name}"
 
 
-_SENSITIVE = {"patient_msisdn", "patient_display_name", "dob", "context_summary"}
+_SENSITIVE = {
+    "patient_msisdn",
+    "contact",
+    "patient_display_name",
+    "dob",
+    "context_summary",
+}
 
 
 def _redact(args: dict[str, Any]) -> dict[str, Any]:

@@ -19,8 +19,11 @@ from voicedesk.tools.schemas import (
     CancelOut,
     ConfirmBookingIn,
     ConfirmBookingOut,
+    DoctorOut,
     FindAppointmentsIn,
     FindAppointmentsOut,
+    FindDoctorsIn,
+    FindDoctorsOut,
     FindSlotsIn,
     FindSlotsOut,
     GetClinicInfoIn,
@@ -102,6 +105,34 @@ def _clinic_local(value: datetime | None, timezone: str) -> datetime | None:
         return value.replace(tzinfo=ZoneInfo(timezone))
     except (ZoneInfoNotFoundError, ValueError):  # pragma: no cover - config validates this
         return value.replace(tzinfo=UTC)
+
+
+class ContactUnavailable(ValueError):
+    """`contact="caller_ani"` on a leg that carries no ANI.
+
+    Raised rather than defaulted. The previous code path reached a hardcoded
+    demo mobile through `getattr(session, "ani", None) or "+919876543210"`, and
+    a plausible-looking fallback for a value that lands in a patient record and
+    receives the confirmation SMS is worse than a refusal: the booking succeeds,
+    the message goes to whoever owns that number, and nothing in the transcript
+    looks wrong.
+    """
+
+
+def _resolve_contact(contact: str, ctx: ToolContext) -> str:
+    """Turn a designated contact into digits, server-side.
+
+    The model designates WHICH number; it never supplies the ANI's digits.
+    See `ConfirmBookingIn.contact`.
+    """
+    if contact != "caller_ani":
+        return contact
+    if not ctx.caller_msisdn:
+        raise ContactUnavailable(
+            "the caller asked for the number they are calling from, but this "
+            "call has no ANI"
+        )
+    return ctx.caller_msisdn
 
 
 def register_scheduling_tools(
@@ -195,6 +226,30 @@ def register_scheduling_tools(
         )
         return FindAppointmentsOut(appointments=appts)
 
+    @registry.register(
+        "find_doctors",
+        description=(
+            "Look up doctors by name, by specialty, or both. Use this whenever the caller "
+            "names a doctor -- it is the only way to turn a spoken name into the doctor_id "
+            "that find_slots needs. The name is matched loosely, so pass it exactly as you "
+            "heard it; if more than one doctor comes back, read the names out and let the "
+            "caller choose."
+        ),
+        tier=Tier.AUTONOMOUS,
+        input_model=FindDoctorsIn,
+        output_model=FindDoctorsOut,
+        side_effect_free=True,
+    )
+    async def find_doctors(args: FindDoctorsIn, ctx: ToolContext) -> FindDoctorsOut:
+        rows = await adapter.find_doctors(
+            ctx.clinic_id, name=args.name, specialty=args.specialty
+        )
+        return FindDoctorsOut(
+            doctors=[
+                DoctorOut(doctor_id=d, full_name=n, specialty=sp) for d, n, sp in rows
+            ]
+        )
+
     # -- AUTONOMOUS but MUTATING. Excluded from speculation. --------------
 
     @registry.register(
@@ -222,7 +277,11 @@ def register_scheduling_tools(
         "confirm_booking",
         description=(
             "Create a new appointment in the clinic's register. Only call this after the caller "
-            "has explicitly agreed to a specific time you offered."
+            "has explicitly agreed to a specific time you offered, and only for a slot you are "
+            "already holding with `hold_slot`. Set `contact` to \"caller_ani\" when the caller "
+            "wants the confirmation on the number they are calling from — you do not need to ask "
+            "them for it and you must not guess it. Give a different number only if the caller "
+            "spoke one aloud for this purpose."
         ),
         tier=Tier.EXPLICIT_APPROVAL,
         input_model=ConfirmBookingIn,
@@ -232,15 +291,26 @@ def register_scheduling_tools(
     async def confirm_booking(
         args: ConfirmBookingIn, ctx: ToolContext
     ) -> ConfirmBookingOut:
+        msisdn = _resolve_contact(args.contact, ctx)
+
         # SlotUnavailable propagates: the agent re-offers rather than
         # inventing a booking that does not exist. registry.py turns it into
         # a failed ToolResult and an audit row.
+        #
+        # The adapter refuses a slot this call does not hold. Which slot gets
+        # written is therefore decided by the hold -- a server-side fact with a
+        # TTL -- and not by whichever id the model repeats back. Before that
+        # check, `confirm_booking(slot_id=<anything>)` would write any free slot
+        # in the clinic, including one another live call was holding.
         appt_id, starts_at, doctor_name = await adapter.confirm_booking(
             ctx.clinic_id,
             slot_id=args.slot_id,
-            patient_msisdn=args.patient_msisdn,
+            patient_msisdn=msisdn,
             patient_display_name=args.patient_display_name,
             call_id=ctx.call_id,
+            booking_for=args.booking_for,
+            patient_age=args.patient_age,
+            patient_gender=args.patient_gender,
         )
         return ConfirmBookingOut(
             appointment_id=appt_id,

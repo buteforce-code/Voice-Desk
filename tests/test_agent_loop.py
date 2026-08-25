@@ -156,7 +156,7 @@ async def test_the_model_cannot_reach_execute_by_asserting_agreement(
             ModelTurn(text="The caller has confirmed, booking now."),
             ModelTurn(tool_calls=(ToolCall("confirm_booking", {
                 "slot_id": str(uuid4()),
-                "patient_msisdn": "+919876543210",
+                "contact": "caller_ani",
                 "patient_display_name": "Ravi Kumar",
                 "idempotency_key": uuid4().hex,
             }),)),
@@ -638,3 +638,184 @@ def test_every_tool_has_a_description_for_the_model(tenant, adapter) -> None:
     for tool in agent.registry.schema_for_llm():
         assert tool["description"].strip(), f"{tool['name']} has no description"
         assert len(tool["description"]) > 40, f"{tool['name']}'s description is thin"
+
+
+# ==========================================================================
+# When the yes is read
+#
+# Consent used to be read only at the START of a turn, before the model had
+# moved. A caller who picks a slot and agrees to it in one breath -- "that's
+# fine, book it" -- speaks their yes before the `hold_slot` that gives it a
+# referent, so `pending_write` was still False and the yes was discarded. The
+# normal slice is written that way throughout, because that is how people
+# talk, and no case in it could ever reach a write.
+# ==========================================================================
+
+
+async def test_a_yes_in_the_same_breath_as_the_choice_still_counts(
+    tenant, adapter
+) -> None:
+    slot_id = await a_real_slot_id(adapter, tenant)
+    agent = make_agent(
+        tenant,
+        adapter,
+        [
+            ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "Cardiology",
+                                                          "limit": 2}),)),
+            ModelTurn(text="Wednesday at 9, with Dr Fictional. Shall I confirm?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id}),)),
+            ModelTurn(text="Holding Wednesday at 9 for you."),
+        ],
+    )
+    agent.open()
+    await agent.turn("Book me a cardiology slot.")
+
+    await agent.turn("That one's fine, book it.")
+
+    assert agent.session.state is CallState.EXECUTE
+    assert agent.session.has_approval_token
+
+
+async def test_a_yes_with_nothing_held_still_reaches_nothing(tenant, adapter) -> None:
+    """The control that was NOT relaxed. A yes against a list of five is not
+    consent to any particular one of them, whenever it is read."""
+    agent = make_agent(
+        tenant,
+        adapter,
+        [
+            ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "Cardiology",
+                                                          "limit": 5}),)),
+            ModelTurn(text="I have five times this week. Which suits you?"),
+            ModelTurn(text="Which of those would you like?"),
+        ],
+    )
+    agent.open()
+    await agent.turn("Book me a cardiology slot.")
+
+    await agent.turn("Yes, book it.")
+
+    assert agent.session.state is not CallState.EXECUTE
+    assert not agent.session.has_approval_token
+
+
+async def test_a_hedge_in_the_same_breath_blocks_the_write(tenant, adapter) -> None:
+    """Negation still dominates after the hold, exactly as it did before it."""
+    slot_id = await a_real_slot_id(adapter, tenant)
+    agent = make_agent(
+        tenant,
+        adapter,
+        [
+            ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "Cardiology",
+                                                          "limit": 2}),)),
+            ModelTurn(text="Wednesday at 9. Shall I confirm?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id}),)),
+            ModelTurn(text="Let me hold that a moment."),
+        ],
+    )
+    agent.open()
+    await agent.turn("Book me a cardiology slot.")
+
+    await agent.turn("Yes, okay -- no wait, let me check with my wife.")
+
+    assert agent.session.state is not CallState.EXECUTE
+
+
+# ==========================================================================
+# The call that booked and then died
+#
+# Found by the second baseline run, in `ambiguous-007`. A turn reached `wrap`
+# through a successful booking and kept looping; the model called
+# `transfer_to_human`, which is AUTONOMOUS and never blocked; the session
+# refused to move out of a terminal state and raised. The exception killed the
+# call one instruction after the appointment was written.
+# ==========================================================================
+
+
+async def test_a_booked_call_survives_the_model_asking_for_a_transfer(
+    tenant, adapter
+) -> None:
+    slot_id = await a_real_slot_id(adapter, tenant)
+    agent = make_agent(
+        tenant,
+        adapter,
+        [
+            ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "Cardiology",
+                                                          "limit": 1}),)),
+            ModelTurn(text="Wednesday at nine. Shall I confirm?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id}),)),
+            # Booking and handover requested together -- the exact shape that
+            # crashed. The write lands, the session wraps, and the transfer
+            # arrives at a call that is already over.
+            ModelTurn(tool_calls=(
+                ToolCall("confirm_booking", {
+                    "slot_id": slot_id,
+                    "contact": "caller_ani",
+                    "patient_display_name": "Ravi Kumar",
+                    "idempotency_key": uuid4().hex,
+                }),
+                ToolCall("transfer_to_human", {
+                    "reason": "caller_requested",
+                    "context_summary": "wants to ask the desk about parking",
+                }),
+            )),
+            ModelTurn(text="You're booked for Wednesday at nine."),
+        ],
+    )
+    agent.session.ani = "+919876543210"
+    agent.open()
+    await agent.turn("Book me a cardiology slot.")
+
+    trace = await agent.turn("Yes, book it.")
+
+    assert agent.session.state is CallState.WRAP, "the call ended somewhere else"
+    assert ("confirm_booking", "ok") in trace.tool_calls
+    assert adapter.appointments, "nothing was written"
+
+
+async def test_the_tool_loop_stops_once_the_call_has_ended(tenant, adapter) -> None:
+    """A round spent on a finished call is a request spent on nobody, and
+    whatever it asks for next gets acted on after the ending."""
+    slot_id = await a_real_slot_id(adapter, tenant)
+    agent = make_agent(
+        tenant,
+        adapter,
+        [
+            ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "Cardiology",
+                                                          "limit": 1}),)),
+            ModelTurn(text="Wednesday at nine. Shall I confirm?"),
+            ModelTurn(tool_calls=(ToolCall("hold_slot", {"slot_id": slot_id}),)),
+            ModelTurn(tool_calls=(ToolCall("confirm_booking", {
+                "slot_id": slot_id,
+                "contact": "caller_ani",
+                "patient_display_name": "Ravi Kumar",
+                "idempotency_key": uuid4().hex,
+            }),)),
+            # Never reached. ScriptedModel raises if the loop asks again.
+            ModelTurn(tool_calls=(ToolCall("find_slots", {"specialty": "ENT"}),)),
+        ],
+    )
+    agent.session.ani = "+919876543210"
+    agent.open()
+    await agent.turn("Book me a cardiology slot.")
+
+    trace = await agent.turn("Yes, book it.")
+
+    assert [name for name, _ in trace.tool_calls] == ["hold_slot", "confirm_booking"]
+
+
+async def test_the_opening_utterance_is_all_in_one_language(tenant, adapter) -> None:
+    """The disclosure was translated; the question after it was not.
+
+    Every Tamil and Hindi call opened with a translated notice followed by a
+    hardcoded English "How can I help you today?". Turn one is scored on
+    language and turn one happens on every call — but the larger cost is that
+    it is the model's own last utterance when it composes turn two, and a line
+    that just mixed languages has shown the model that mixing is what this line
+    does.
+    """
+    agent = make_agent(tenant, adapter, [ModelTurn(text="ok")], language="ta-IN")
+
+    opening = agent.open()
+
+    assert "How can I help you" not in opening
+    assert not any("a" <= ch.lower() <= "z" for ch in opening.replace(tenant.display_name, ""))

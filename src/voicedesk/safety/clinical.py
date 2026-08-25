@@ -96,11 +96,25 @@ class Verdict:
 
 _CLINICAL_TERMS = (
     # English
-    r"medicine|medication|tablet|tablets|pill|pills|dose|dosage|drug|drugs"
+    # `medicine` is guarded against the DEPARTMENT of the same name. "We
+    # usually start with General Medicine" is the clinic's routing policy read
+    # aloud, and it was being blocked as medication advice -- `start` matched
+    # the directive frame and `Medicine` the clinical term. The guard refused
+    # the single most useful sentence the desk can say to a caller who does not
+    # know which department they need, which pushed every such caller to a
+    # transfer that did not need to happen.
+    r"(?<!general )medicine|medication|tablet|tablets|pill|pills|dose|dosage|drug|drugs"
     r"|antibiotic|painkiller|insulin|steroid|injection|ointment|syrup"
     r"|symptom|symptoms|pain|fever|infection|disease|illness|condition"
     r"|bp|blood pressure|sugar|diabetes|cholesterol|thyroid"
     r"|treatment|therapy|surgery|operation|scan|x-?ray|biopsy"
+    # Named acute conditions. The lexicon held categories -- "condition",
+    # "disease", "illness" -- and no instances, so "you are having a heart
+    # attack" carried no clinical term for the inference frame to sit beside
+    # and passed clean. The words a frightened caller actually hears are the
+    # specific ones, and they are the ones this agent must never say.
+    r"|heart attack|cardiac arrest|stroke|seizure|fit|allergic reaction"
+    r"|anaphylaxis|appendicitis|fracture|concussion|miscarriage|clot"
     # Tamil
     r"|மாத்திரை|மருந்து|ஊசி|அறிகுறி|நோய்|காய்ச்சல்|வலி|சர்க்கரை|ரத்த அழுத்தம்|சிகிச்சை"
     # Hindi
@@ -177,13 +191,68 @@ _DOSAGE = re.compile(
     re.IGNORECASE,
 )
 
+_SYMPTOM = (
+    r"headache|migraine|stomach ?ache|tummy ache|chest pain|back pain"
+    r"|toothache|earache|sore throat|cough|cold|rash|itching|swelling"
+    r"|dizziness|dizzy|nausea|vomiting|breathless|palpitation|bleeding"
+    r"|தலைவலி|வயிற்று வலி|மார்பு வலி|இருமல்|தடிப்பு|மயக்கம்"
+    r"|सिरदर्द|सर दर्द|पेट दर्द|सीने में दर्द|खांसी|चक्कर|उल्टी"
+)
+
+_SPECIALIST = (
+    r"(?:see|consult|visit|go to|book(?:ing)? (?:with|an?))\s+"
+    r"(?:an?|the)?\s*"
+    r"(?:\w+(?:ologist|ologists|ology)|specialist|surgeon|physician)"
+    r"|(?:cardio|neuro|derma|gastro|endocrin|ortho|paediatr|pediatr|gynaec|gynec)\w*"
+)
+
+_SYMPTOM_RE = re.compile(_SYMPTOM, re.IGNORECASE)
+
+_ACKNOWLEDGEMENT = re.compile(
+    r"sorry to hear|sorry you'?re|sorry you are|sorry about|sorry, that sounds"
+    r"|that sounds (?:rotten|awful|horrible|unpleasant|painful)"
+    r"|i hear (?:that )?you|i understand you"
+    r"|கேட்க வருத்தமா|வருந்துகிறேன்"
+    r"|सुनकर दुख|अफ़सोस|खेद है",
+    re.IGNORECASE,
+)
+"""Sympathy, repeating back what the caller just said.
+
+The inference frame exists to stop the agent ASSERTING a condition -- "you are
+having a heart attack". It cannot tell that from "I'm sorry to hear you are
+having a severe headache", which is the caller's own words handed back with
+some warmth, and blocking it is how the desk ends up sounding cold to someone
+who rang in pain. The whole reply was being replaced by a canned refusal and a
+transfer, so a caller who opened by saying why they called was answered by a
+machine declining to discuss it.
+
+Echoing is not interpreting. The agent adds no claim, no cause and no
+consequence -- it names the thing the caller already named. The research on
+this is unambiguous: acknowledge once, briefly, then move to what you can do.
+
+The window is deliberately short. "I'm sorry to hear that. You are having a
+heart attack" is two sentences and must still be caught, so the acknowledgement
+has to sit immediately before the phrase it excuses.
+"""
+
 _TERMS = re.compile(_CLINICAL_TERMS, re.IGNORECASE)
-_FRAMES: tuple[tuple[ClinicalCategory, re.Pattern[str], bool], ...] = (
-    # (category, frame, requires a clinical term nearby)
-    (ClinicalCategory.ADVICE, re.compile(_DIRECTIVE, re.IGNORECASE), True),
-    (ClinicalCategory.INTERPRETATION, re.compile(_INFERENCE, re.IGNORECASE), True),
-    (ClinicalCategory.TRIAGE, re.compile(_URGENCY, re.IGNORECASE), False),
-    (ClinicalCategory.RESULTS, re.compile(_RESULT_CLAIM, re.IGNORECASE), False),
+_FRAMES: tuple[tuple[ClinicalCategory, re.Pattern[str], str | None], ...] = (
+    # (category, frame, which lexicon must appear nearby -- None = fires alone)
+    (ClinicalCategory.ADVICE, re.compile(_DIRECTIVE, re.IGNORECASE), "term"),
+    (ClinicalCategory.INTERPRETATION, re.compile(_INFERENCE, re.IGNORECASE), "term"),
+    (ClinicalCategory.TRIAGE, re.compile(_URGENCY, re.IGNORECASE), None),
+    # Routing a SYMPTOM to a SPECIALTY. This is the textbook prohibited act --
+    # CLAUDE.md rule 2 and PROJECT.md 1.4 name it explicitly -- and it was the
+    # one shape of clinical content the guard did not catch: "for a headache
+    # you should see a neurologist" passed cleanly, because `headache` was in
+    # no lexicon and `neurologist` in none either.
+    #
+    # It fires on the SPECIALIST frame and requires a symptom nearby, so
+    # "General Medicine is where we start everyone" -- which names no symptom
+    # -- is untouched. That asymmetry is the whole distinction: naming a
+    # department is administration, matching one to a complaint is medicine.
+    (ClinicalCategory.TRIAGE, re.compile(_SPECIALIST, re.IGNORECASE), "symptom"),
+    (ClinicalCategory.RESULTS, re.compile(_RESULT_CLAIM, re.IGNORECASE), None),
 )
 
 REFUSALS = {
@@ -257,11 +326,30 @@ def screen(
         categories.append(ClinicalCategory.PRESCRIPTION)
         evidence.append(f"dosage:{dosage.group().strip()}")
 
+    # Two lexicons, deliberately not merged.
+    #
+    # They were merged for about ten minutes and it broke the agent: with
+    # symptoms counted as clinical terms everywhere, "I can help you book an
+    # appointment for your headache" put a directive beside a symptom and the
+    # whole reply was refused. A caller naming their own complaint is the
+    # normal opening of a normal call, and nothing the agent says around it is
+    # thereby medical.
+    #
+    # A symptom is evidence for exactly ONE frame -- routing to a specialty --
+    # because that is the pairing that constitutes practising medicine.
     term_spans = [m.span() for m in _TERMS.finditer(text)]
+    symptom_spans = [m.span() for m in _SYMPTOM_RE.finditer(text)]
 
-    for category, frame, needs_term in _FRAMES:
+    ack_spans = [m.span() for m in _ACKNOWLEDGEMENT.finditer(text)]
+
+    for category, frame, evidence_kind in _FRAMES:
+        spans = symptom_spans if evidence_kind == "symptom" else term_spans
         for match in frame.finditer(text):
-            if needs_term and not _near_any(match.span(), term_spans):
+            if evidence_kind and not _near_any(match.span(), spans):
+                continue
+            if category is ClinicalCategory.INTERPRETATION and _follows_any(
+                match.span(), ack_spans
+            ):
                 continue
             categories.append(category)
             evidence.append(f"{category.value}:{match.group().strip()}")
@@ -280,6 +368,20 @@ def screen(
         categories=tuple(dict.fromkeys(categories)),
         evidence=tuple(evidence),
     )
+
+
+def _follows_any(
+    span: tuple[int, int], others: list[tuple[int, int]], window: int = 24
+) -> bool:
+    """Is this match immediately AFTER one of `others`?
+
+    Directional, unlike `_near_any`. "Sorry to hear you are having a headache"
+    excuses the phrase that follows it; "you are having a heart attack, sorry
+    to hear it" is not excused by an apology arriving afterwards, and the
+    window is tight enough that a second sentence does not reach back.
+    """
+    start, _ = span
+    return any(0 <= start - other_end <= window for _, other_end in others)
 
 
 def _near_any(span: tuple[int, int], others: list[tuple[int, int]]) -> bool:

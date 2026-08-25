@@ -153,6 +153,13 @@ class CallSession:
     dry_run: bool = True
 
     state: CallState = CallState.INTAKE
+    ani: str | None = None
+    """The number this call arrived on, set by the telephony leg at answer.
+
+    A field rather than something bolted on with `setattr`, which is how the
+    harness supplied it while the agent fell back to a hardcoded demo
+    number. A fallback that looks like a real Indian mobile is the wrong shape
+    of default for a value that ends up in a patient record."""
     identity_verified: bool = False
     verified_msisdn: str | None = None
     identity_attempts: int = 0
@@ -238,8 +245,31 @@ class CallSession:
         Two call sites had already grown their own `if state is not TRANSFER`
         guard, which is precisely the shape the docstring above warns about.
         The third forgot, and forgetting is what the method exists to prevent.
+
+        **The guard covers every terminal state, not just `transfer`.** It read
+        `if self.state is CallState.TRANSFER` for exactly as long as it took
+        bookings to start succeeding. The second baseline run put a call
+        through `confirm_booking` -> `audit` -> `wrap`, whereupon the model --
+        still inside the same turn -- called `transfer_to_human`, which is
+        AUTONOMOUS and never blocked, and this method raised `StateError` from
+        `wrap`. The exception propagated through `Agent.turn` and killed the
+        call **one instruction after the appointment was written.** The row is
+        in the register, the caller hears nothing, the line drops. It looks
+        clean in the database and broken to the human, which is the worst pair
+        of properties a failure can have.
+
+        Narrowing the guard to one terminal state was a guess that the only
+        way to arrive here twice was via `transfer`. `wrap` is the other way,
+        and it was unreachable when the guard was written because nothing had
+        ever booked.
         """
-        if self.state is CallState.TRANSFER:
+        if self.state in TERMINAL:
+            log.warning(
+                "call.transfer_after_end",
+                trace_id=self.trace_id,
+                state=self.state.value,
+                reason=reason,
+            )
             return self.transitions[-1]
         return self.transition_to(CallState.TRANSFER, reason)
 
@@ -297,6 +327,7 @@ class CallSession:
             speculative=speculative,
             identity_verified=self.identity_verified,
             verified_msisdn=self.verified_msisdn,
+            caller_msisdn=self.ani,
         )
 
     # -- introspection ----------------------------------------------------

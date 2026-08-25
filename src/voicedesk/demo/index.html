@@ -1,0 +1,726 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    color-scheme: light;
+    --ink:#15171c; --ink-2:#51565f; --ink-3:#8b909a; --ink-4:#b9bdc5;
+    --paper:#fcfbf9; --card:#fff; --line:#eceae6; --line-2:#f5f3f0;
+    --brand:#1d6b58; --brand-2:#e9f3f0; --brand-3:#12503f;
+    --warm:#a2701f; --warm-2:#fcf3e4;
+    --stop:#a63a38; --stop-2:#fbeceb;
+    --r:14px;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --serif:"Newsreader",Georgia,serif;
+    --sh:0 1px 2px rgba(20,22,26,.04),0 10px 28px -14px rgba(20,22,26,.15);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  body::before{content:"";position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(56rem 36rem at 8% -12%,#eef5f2 0,transparent 62%),
+               radial-gradient(46rem 32rem at 102% -4%,#faf3e8 0,transparent 58%)}
+  .shell{position:relative;max-width:1220px;margin:0 auto;padding:0 26px 60px}
+
+  header{display:flex;align-items:center;gap:12px;padding:26px 0 20px}
+  .mark{width:30px;height:30px;border-radius:9px;background:var(--brand);color:#fff;
+        display:grid;place-items:center;flex:none}
+  .mark svg{width:16px;height:16px;fill:currentColor}
+  .brand{font-weight:600;letter-spacing:-.015em;line-height:1.25}
+  .brand small{display:block;font-weight:400;font-size:12.5px;color:var(--ink-3)}
+  .pill{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:13px;
+        color:var(--ink-2);border:1px solid var(--line);background:var(--card);
+        border-radius:999px;padding:6px 13px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ink-4);flex:none}
+  .dot.on{background:var(--brand);box-shadow:0 0 0 3px var(--brand-2)}
+  .dot.hear{background:var(--stop);box-shadow:0 0 0 3px var(--stop-2)}
+
+  main{display:grid;grid-template-columns:minmax(0,1fr) 352px;gap:22px;align-items:start}
+  @media(max-width:940px){main{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh)}
+  .card h2{margin:0;padding:15px 18px 12px;font-size:12px;font-weight:600;
+           color:var(--ink-3);border-bottom:1px solid var(--line-2)}
+
+  .stage{min-height:470px;display:grid;place-items:center;padding:52px 26px}
+  .idle{text-align:center;max-width:398px}
+  .idle h1{font-family:var(--serif);font-weight:400;font-size:35px;line-height:1.15;
+           letter-spacing:-.02em;margin:0 0 10px}
+  .idle p{color:var(--ink-2);margin:0 0 30px}
+  .cta{display:inline-flex;align-items:center;gap:11px;padding:15px 26px 15px 21px;
+       border:0;border-radius:999px;background:var(--brand);color:#fff;cursor:pointer;
+       font:inherit;font-weight:500;font-size:15.5px;
+       box-shadow:0 2px 6px rgba(29,107,88,.24),0 14px 30px -12px rgba(29,107,88,.5)}
+  .cta svg{width:19px;height:19px;fill:currentColor}
+  .cta.end{background:var(--stop);box-shadow:0 2px 6px rgba(166,58,56,.2)}
+
+  #tape{padding:20px 22px;max-height:46vh;overflow-y:auto;display:flex;flex-direction:column;gap:15px}
+  .turn{max-width:82%}
+  .turn .who{font-size:11.5px;color:var(--ink-3);margin-bottom:3px}
+  .turn .said{font-size:15.5px}
+  .turn.agent{align-self:flex-start}
+  .turn.you{align-self:flex-end;text-align:right}
+  .turn.you .said{display:inline-block;background:var(--line-2);color:var(--ink-2);
+                  padding:9px 14px;border-radius:15px 15px 3px 15px;text-align:left}
+  .turn.live .said{opacity:.5}
+  .turn.note .said{color:var(--stop);font-size:13.5px}
+  .turn.guard .said{background:var(--stop-2);border-left:2px solid var(--stop);
+                    padding:10px 14px;border-radius:0 12px 12px 0}
+
+  .dock{display:flex;align-items:center;gap:14px;padding:14px 18px;border-top:1px solid var(--line-2)}
+  .viz{display:flex;align-items:center;gap:3px;height:26px;width:52px;flex:none}
+  .viz i{width:3px;border-radius:2px;background:var(--brand);height:4px}
+  .state{flex:1;font-size:14px;color:var(--ink-2);min-width:0}
+  .state b{color:var(--ink);font-weight:500}
+  .typed{display:flex;padding:0 18px 16px}
+  .typed input{flex:1;font:inherit;font-size:14.5px;background:var(--paper);
+    border:1px solid var(--line);border-radius:11px;padding:10px 13px;color:var(--ink)}
+  .typed input:focus{outline:2px solid var(--brand-2);border-color:var(--brand)}
+
+  .calbar{display:flex;align-items:center;gap:10px;padding:14px 18px 6px}
+  .calbar .m{font-family:var(--serif);font-size:18px}
+  .navb{margin-left:auto;display:flex;gap:4px}
+  .navb button{width:26px;height:26px;border-radius:7px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink-2);cursor:pointer;line-height:1;font-size:13px}
+  .navb button:hover:not(:disabled){border-color:var(--ink-4);color:var(--ink)}
+  .navb button:disabled{opacity:.35;cursor:default}
+  .grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;padding:6px 16px 10px}
+  .dow{font-size:10px;color:var(--ink-4);text-align:center;letter-spacing:.04em}
+  .day{aspect-ratio:1;border-radius:9px;display:grid;place-items:center;font-size:13px;
+       font-variant-numeric:tabular-nums;border:1px solid transparent;color:var(--ink-4);
+       position:relative;cursor:default}
+  .day.open{background:var(--brand-2);color:var(--brand-3);border-color:#d8e9e4;cursor:pointer}
+  .day.limited{background:var(--warm-2);color:#7c5417;border-color:#f1e2ca;cursor:pointer}
+  .day.blocked{background:var(--stop-2);color:#8b2f2d;border-color:#f2d9d8}
+  /* A true corner-to-corner rule. It was a rotated top border on an inset box,
+     which lands wherever the box happens to be rather than on the diagonal --
+     the line sat high and short and read as a smudge. A gradient draws the
+     real diagonal of whatever size the cell is. */
+  .day.blocked::after{content:"";position:absolute;inset:0;border-radius:9px;
+    background:linear-gradient(to top right,transparent calc(50% - .6px),
+      currentColor calc(50% - .6px),currentColor calc(50% + .6px),
+      transparent calc(50% + .6px));opacity:.4}
+  .day .pip{position:absolute;bottom:3.5px;left:50%;transform:translateX(-50%);
+    width:3.5px;height:3.5px;border-radius:50%;background:currentColor;opacity:.75}
+  .day.today{outline:2px solid var(--brand);outline-offset:1px;font-weight:600}
+  .day.sel{background:var(--brand);color:#fff;border-color:var(--brand)}
+  .day.pad{visibility:hidden}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;padding:0 18px 12px;font-size:11.5px;color:var(--ink-3)}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .key{width:9px;height:9px;border-radius:3px}
+
+  .slots{border-top:1px solid var(--line-2);padding:12px 18px 16px}
+  .slots h3{margin:0 0 9px;font-size:13px;font-weight:550;color:var(--ink)}
+  .times{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px;
+         max-height:168px;overflow-y:auto}
+  .t{border:1px solid var(--line);border-radius:8px;padding:7px 4px;text-align:center;
+     font-size:12.5px;color:var(--ink-2);background:var(--card)}
+  .t.taken{background:var(--line-2);color:var(--ink-4);text-decoration:line-through}
+  .muted{font-size:13px;color:var(--ink-3)}
+
+  ul{list-style:none;margin:0;padding:12px 18px 16px}
+  ul:empty::after{content:attr(data-empty);font-size:13.5px;color:var(--ink-3)}
+  .appt{padding:10px 0;border-bottom:1px solid var(--line-2)}
+  .appt:last-child{border-bottom:0}
+  .appt b{font-weight:550;font-size:14.5px}
+  .appt span{display:block;color:var(--ink-3);font-size:12.5px}
+  .side{display:flex;flex-direction:column;gap:22px}
+  .foot{padding:0 18px 14px;font-size:11.5px;color:var(--ink-3)}
+  .hide{display:none!important}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="mark"><svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.46.57 3.6a1 1 0 0 1-.25 1l-2.22 2.2Z"/></svg></div>
+    <div class="brand">Voice Desk<small id="clinic">…</small></div>
+    <div class="pill"><span class="dot" id="dot"></span><span id="statusText">Not connected</span></div>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="stage" id="idle">
+        <div class="idle">
+          <h1>Call the front desk</h1>
+          <p>Speak naturally — English, Tamil or Hindi, and you can switch mid-sentence.</p>
+          <button class="cta" id="start">
+            <svg viewBox="0 0 24 24"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.46.57 3.6a1 1 0 0 1-.25 1l-2.22 2.2Z"/></svg>
+            Start call
+          </button>
+        </div>
+      </div>
+
+      <div id="live" class="hide">
+        <div id="tape"></div>
+        <div class="dock">
+          <div class="viz" id="viz"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="state" id="state">Connecting…</div>
+          <button class="cta end" id="end" style="padding:9px 17px;font-size:14px">End call</button>
+        </div>
+        <div class="typed"><input id="typed" placeholder="or type instead"></div>
+      </div>
+    </section>
+
+    <div class="side">
+      <section class="card">
+        <div class="calbar">
+          <span class="m" id="calMonth">—</span>
+          <span class="navb"><button id="prev">‹</button><button id="next">›</button></span>
+        </div>
+        <div class="grid" id="grid"></div>
+        <div class="legend">
+          <span><i class="key" style="background:#e9f3f0;border:1px solid #d8e9e4"></i>Open</span>
+          <span><i class="key" style="background:#fcf3e4;border:1px solid #f1e2ca"></i>Filling</span>
+          <span><i class="key" style="background:#fbeceb;border:1px solid #f2d9d8"></i>Full</span>
+          <span><i class="key" style="background:#fff;border:1px solid #eceae6"></i>Closed</span>
+        </div>
+        <div class="slots" id="slots"><div class="muted">Pick a day to see its times.</div></div>
+      </section>
+
+      <section class="card">
+        <h2>Booked</h2>
+        <ul id="reg" data-empty="Nothing booked yet."></ul>
+      </section>
+
+      <section class="card">
+        <h2>Progress</h2>
+        <ul id="steps" data-empty="Not started."></ul>
+        <div class="foot" id="foot"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { animate, stagger } from "https://cdn.jsdelivr.net/npm/motion@12.23.12/+esm";
+
+const $ = (id) => document.getElementById(id);
+
+/* Motion, used sparingly and on purpose. A reception desk should feel calm, so
+   everything here is a short spring on ENTRY only -- no looping, no hover
+   theatre. The one continuous animation is the level meter, and that is
+   showing live data rather than decorating. */
+const EASE = { type: "spring", stiffness: 380, damping: 32 };
+const rise = (el, d = 0) => animate(el, { opacity: [0, 1], y: [6, 0] }, { ...EASE, delay: d });
+
+const STEPS = [
+  { key: "identify", label: "Understanding the request" },
+  { key: "draft",    label: "Finding a time" },
+  { key: "approval", label: "Confirming with you" },
+  { key: "wrap",     label: "Booked" },
+];
+const RANK = { intake:0, identify:1, research:1, draft:2, validate:2, repair:2,
+               approval:3, execute:3, audit:3, wrap:4 };
+const OVER = new Set(["wrap","transfer","abandoned","failed","refused"]);
+
+let callId=null, ended=false, busy=false, language=null;
+let ws=null, mic=null, ctx=null, node=null, analyser=null, rafId=0;
+let player=null, speaking=false, micLive=false;
+let partial="", finalText="", liveRow=null;
+
+/* Turn-taking. */
+let speakSeq=0;        // bumped to abandon whatever is currently playing
+let saying="";         // the words in the air right now, for echo rejection
+let spokeAt=0;         // when this utterance started, for the barge-in guard
+let holdLines=null, fillAfterMs=700, holdAt=0;
+
+const GAP_MS=110;
+/* The pause between two sentences of one reply.
+
+   A person breathes at a full stop. Synthesised as one blob the sentences run
+   together and the read-back sounds recited rather than said -- which is the
+   utterance a caller decides on, because it is the one they are checking. */
+
+const BARGE_GUARD_MS=350;
+/* How long after the desk starts talking before it may be interrupted.
+
+   Not politeness -- a race. The caller's own last utterance is still being
+   decoded when playback begins, and a transcript that arrives 80ms in is the
+   tail of what they already finished saying, not a new interruption. Without
+   this the desk cuts itself off answering a question nobody asked twice. */
+
+const BARGE_MIN_WORDS=2;
+/* "Mm", "uh", a cough and a door are not interruptions. Two real words is the
+   cheapest filter that keeps a backchannel from stopping the sentence it is
+   agreeing with -- and on this line the commonest single word arriving mid-
+   utterance is "yes", said while the desk is still reading the time back. */
+
+const ECHO_OVERLAP=0.5;
+/* Above this share of words shared with what is currently being SAID, the
+   transcript is the desk hearing itself.
+
+   This is the control that makes barge-in safe, and it replaces the one that
+   was removed. The old design muted the microphone for the whole of every
+   agent utterance, which made interruption physically impossible -- a caller
+   who realised mid-sentence that Tuesday was wrong had to sit through to the
+   end. That is a walkie-talkie, and it is the single loudest tell that a line
+   is automated.
+
+   Muting was the right diagnosis of the wrong problem. The failure it fixed
+   was the desk answering ITSELF: on a laptop the microphone hears the
+   speakers, the agent's own voice came back as a transcript, and VAD-triggered
+   barge-in fired on it. LiveKit's published figure is that 51% of
+   VAD-triggered barge-ins are false positives, which is why interruption is
+   not decided by voice activity here at all.
+
+   It is decided on a settled transcript with words in it, and the agent's own
+   voice is the one transcript we can always recognise: it matches, word for
+   word, the sentence being played. So the echo is rejected by identity rather
+   than by deafness, and a real interruption -- which shares nothing with what
+   the desk is saying -- gets through. */
+let month=new Date(); month.setDate(1);
+let selected=null, calendarDays=[];
+
+function line(who, text, cls){
+  const row=document.createElement("div");
+  row.className="turn "+(cls||who);
+  if(who){const w=document.createElement("div");w.className="who";
+    w.textContent=who==="agent"?"Front desk":who==="you"?"You":"";row.appendChild(w);}
+  const s=document.createElement("div");s.className="said";s.textContent=text;
+  row.appendChild(s);
+  $("tape").appendChild(row); $("tape").scrollTop=$("tape").scrollHeight;
+  rise(row); return row;
+}
+const tell=(html)=>{$("state").innerHTML=html;};
+function status(text,mode){
+  $("statusText").textContent=text;
+  $("dot").className="dot"+(mode?" "+mode:"");
+}
+
+function render(d){
+  const reached=Math.max(0,...(d.states||[]).map(s=>RANK[s]??0));
+  const bad=(d.states||[]).some(s=>["transfer","refused","failed","abandoned"].includes(s));
+  const list=$("steps"); list.textContent="";
+  STEPS.forEach((step,i)=>{
+    const li=document.createElement("li"); li.className="appt";
+    const b=document.createElement("b");
+    const done=reached>i, now=reached===i+1&&!OVER.has(d.state);
+    b.textContent=(done?"✓  ":now?"›  ":"·  ")+step.label;
+    b.style.color=done?"#1d6b58":now?"#15171c":"#b9bdc5";
+    b.style.fontWeight=now?"600":"500";
+    li.appendChild(b); list.appendChild(li);
+  });
+  if(bad){const li=document.createElement("li");li.className="appt";
+    const b=document.createElement("b");b.textContent="→  Passed to a person";
+    b.style.color="#a2701f";li.appendChild(b);list.appendChild(li);}
+
+  const reg=$("reg"); const before=reg.children.length; reg.textContent="";
+  (d.appointments||[]).forEach(a=>{
+    const li=document.createElement("li");li.className="appt";
+    const b=document.createElement("b");b.textContent=a.doctor;
+    const s=document.createElement("span");s.textContent=a.specialty+" · "+a.starts_at;
+    li.append(b,s);reg.appendChild(li);
+  });
+  if(reg.children.length>before){
+    animate(reg.children,{opacity:[0,1],x:[10,0]},{...EASE,delay:stagger(.05)});
+    loadCalendar();          // a booking changes the day; redraw from the register
+  }
+}
+
+async function loadCalendar(){
+  try{
+    const r=await fetch("/api/calendar");
+    calendarDays=(await r.json()).days||[];
+    drawMonth();
+    if(selected) loadDay(selected);
+  }catch(e){}
+}
+function drawMonth(){
+  const grid=$("grid"); grid.textContent="";
+  ["M","T","W","T","F","S","S"].forEach(d=>{
+    const el=document.createElement("div");el.className="dow";el.textContent=d;grid.appendChild(el);
+  });
+  const y=month.getFullYear(), m=month.getMonth();
+  $("calMonth").textContent=month.toLocaleDateString(undefined,{month:"long",year:"numeric"});
+  const pad=(new Date(y,m,1).getDay()+6)%7, count=new Date(y,m+1,0).getDate();
+  for(let i=0;i<pad;i++){const e=document.createElement("div");e.className="day pad";e.textContent="0";grid.appendChild(e);}
+  const known=new Map(calendarDays.map(d=>[d.date,d]));
+  for(let n=1;n<=count;n++){
+    const iso=`${y}-${String(m+1).padStart(2,"0")}-${String(n).padStart(2,"0")}`;
+    const info=known.get(iso);
+    const el=document.createElement("div");
+    el.className="day "+(info?info.status:"closed")+(info&&info.today?" today":"")+(iso===selected?" sel":"");
+    el.textContent=n;
+    if(info){
+      el.title=info.status==="blocked"?"Fully booked"
+             :info.status==="closed"?"Clinic closed"
+             :info.free+" times free"+(info.booked?", "+info.booked+" booked":"");
+      if(info.booked){
+        const pip=document.createElement("i"); pip.className="pip"; el.appendChild(pip);
+      }
+      if(info.status==="open"||info.status==="limited")
+        el.addEventListener("click",()=>{selected=iso;drawMonth();loadDay(iso);});
+    }
+    grid.appendChild(el);
+  }
+  animate([...grid.querySelectorAll(".day:not(.pad)")],
+          {opacity:[0,1],scale:[.92,1]},{duration:.22,delay:stagger(.006)});
+  const shown=`${y}-${String(m+1).padStart(2,"0")}`;
+  $("prev").disabled=!calendarDays.length||calendarDays[0].date.slice(0,7)>=shown;
+  $("next").disabled=!calendarDays.length||calendarDays[calendarDays.length-1].date.slice(0,7)<=shown;
+}
+async function loadDay(iso){
+  const box=$("slots");
+  box.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    const {slots}=await (await fetch("/api/day?date="+encodeURIComponent(iso))).json();
+    const when=new Date(iso+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",day:"numeric",month:"long"});
+    if(!slots.length){box.innerHTML=`<h3>${when}</h3><div class="muted">No times available.</div>`;return;}
+    box.innerHTML=`<h3>${when}</h3>`;
+    const wrap=document.createElement("div"); wrap.className="times";
+    slots.forEach(s=>{
+      const el=document.createElement("div"); el.className="t";
+      el.textContent=s.label; el.title=s.doctors.join(", "); wrap.appendChild(el);
+    });
+    box.appendChild(wrap);
+    animate(wrap.children,{opacity:[0,1],y:[4,0]},{duration:.2,delay:stagger(.012)});
+  }catch(e){ box.innerHTML='<div class="muted">Could not load that day.</div>'; }
+}
+$("prev").addEventListener("click",()=>{month.setMonth(month.getMonth()-1);drawMonth();});
+$("next").addEventListener("click",()=>{month.setMonth(month.getMonth()+1);drawMonth();});
+
+/* Play one reply, sentence by sentence.
+
+   Returns true if it finished, false if it was interrupted -- by the caller
+   talking over it, or by a newer utterance taking its place. The caller of
+   this function must check: a `false` means another turn is already in flight
+   and everything after the await belongs to a conversation that has moved on.
+
+   Every clip is requested at once and played in order. The browser fetches
+   them in parallel, so the caller waits for sentence ONE to synthesise rather
+   than for all of them -- which is the whole of the gain on the Sarvam path,
+   where the response is a base64 document with nothing to stream. */
+async function speak(clips, opts){
+  const list=(Array.isArray(clips)?clips:[clips]).filter(Boolean);
+  if(!list.length) return true;
+
+  // Silence the previous utterance FIRST, then claim the sequence number.
+  // The other order is self-defeating: `stopSpeaking` bumps the counter, so a
+  // seq taken before it is already stale and every clip is skipped on the
+  // first check -- the desk goes permanently mute.
+  stopSpeaking();
+  const seq=++speakSeq;
+  speaking=true; spokeAt=Date.now(); saying=list.join(" ");
+  partial=""; finalText="";
+  if(!(opts&&opts.quiet)){ tell("Speaking…"); status("On a call","on"); }
+
+  // A GET the browser streams natively: playback starts on the first bytes
+  // rather than the last, which is most of the difference between two seconds
+  // of silence and none.
+  const queue=list.map(text=>{
+    const a=new Audio("/api/tts?"+new URLSearchParams({text,language:language||"en-IN"}));
+    a.preload="auto";
+    return a;
+  });
+
+  for(let i=0;i<queue.length;i++){
+    if(seq!==speakSeq) break;
+    player=queue[i];
+    await new Promise(done=>{
+      // `onpause` as well as `onended`, and it is not belt-and-braces.
+      // Interrupting calls `pause()`, which does NOT fire `ended` -- so
+      // without this the wait never settles, `speak` never returns, and the
+      // cleanup below never silences the clips still queued behind the
+      // interruption. Resolving twice is harmless; never resolving is not.
+      player.onended=player.onerror=player.onpause=()=>done();
+      player.play().catch(()=>done());
+    });
+    if(seq!==speakSeq) break;
+    if(i<queue.length-1) await new Promise(r=>setTimeout(r,GAP_MS));
+  }
+  // Anything still queued behind an interruption must be silenced, or the
+  // sentence the caller cut off finishes itself over the top of their answer.
+  queue.forEach(a=>{ try{a.pause();}catch(e){} a.src=""; });
+
+  if(seq!==speakSeq) return false;
+  speaking=false; player=null; saying="";
+  // A short tail before what is heard next counts: the last syllable is still
+  // leaving the speaker when `onended` fires.
+  await new Promise(r=>setTimeout(r,180));
+  if(seq!==speakSeq) return false;
+  partial=""; finalText="";
+  return true;
+}
+function stopSpeaking(){
+  speakSeq++;
+  if(player){ try{player.pause();}catch(e){} player=null; }
+  speaking=false; saying="";
+}
+
+/* -- interruption ------------------------------------------------------- */
+
+const words=(s)=>(s||"").toLowerCase()
+  .replace(/[^\p{L}\p{N}\s]/gu," ").split(/\s+/).filter(Boolean);
+
+function isEcho(text){
+  const said=new Set(words(saying)), heard=words(text);
+  if(!heard.length||!said.size) return false;
+  return heard.filter(w=>said.has(w)).length/heard.length >= ECHO_OVERLAP;
+}
+
+function isBargeIn(ev){
+  // A settled transcript only. An interim guess is revised constantly and
+  // half of them are the recogniser's first pass at the desk's own voice.
+  if(!ev.final) return false;
+  if(Date.now()-spokeAt < BARGE_GUARD_MS) return false;
+  if(words(ev.text).length < BARGE_MIN_WORDS) return false;
+  return !isEcho(ev.text);
+}
+
+/* 512 samples per frame, buffered.
+   `process()` hands over 128 samples at a time -- one render quantum -- and
+   forwarding those straight out sent the recogniser 256-byte frames when its
+   voice-activity detector segments on 512-sample ones. Four times too small.
+   It did not fail loudly: it mis-segmented, and "எனக்குத் தலை வலிக்குது, நான்
+   doctor பார்க்க முடியுமா" came back as "So, doctor problem." The same audio
+   through the batch API transcribed perfectly, which is what proved the fault
+   was the framing and not the recogniser or the accent. */
+const FRAME=512;
+const WORKLET=`
+const FRAME=${FRAME};
+class Tap extends AudioWorkletProcessor{
+  constructor(){super();this.buf=new Int16Array(FRAME);this.n=0;}
+  process(inputs){
+    const ch=inputs[0][0];
+    if(!ch) return true;
+    for(let i=0;i<ch.length;i++){
+      const v=Math.max(-1,Math.min(1,ch[i]));
+      this.buf[this.n++]=v<0?v*0x8000:v*0x7fff;
+      if(this.n===FRAME){
+        const out=new Int16Array(this.buf);
+        this.port.postMessage(out.buffer,[out.buffer]);
+        this.n=0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('tap',Tap);`;
+
+async function openMic(bridge){
+  mic=await navigator.mediaDevices.getUserMedia({audio:{
+    echoCancellation:true,noiseSuppression:true,autoGainControl:true,channelCount:1}});
+  ctx=new AudioContext({sampleRate:16000});
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET],{type:"text/javascript"})));
+  const src=ctx.createMediaStreamSource(mic);
+  analyser=ctx.createAnalyser(); analyser.fftSize=512; src.connect(analyser);
+  node=new AudioWorkletNode(ctx,"tap"); src.connect(node);
+
+  ws=new WebSocket(bridge); ws.binaryType="arraybuffer";
+  ws.onopen=()=>ws.send(JSON.stringify({language:null}));
+  ws.onmessage=(e)=>onBridge(JSON.parse(e.data));
+  ws.onclose=()=>{ if(!ended) tell("The line to the desk dropped."); };
+  micLive=true;
+  node.port.onmessage=(e)=>{
+    if(!ws||ws.readyState!==1) return;
+    // The room goes upstream the whole time the call is up -- including while
+    // the desk is talking. That is what makes interruption possible at all.
+    //
+    // It used to send silence during every agent utterance, which is a
+    // guarantee that a caller cannot interrupt: the audio never left the
+    // browser, so there was nothing for the recogniser to hear. What that
+    // bought was protection from the desk answering itself, and that job now
+    // belongs to `isEcho` -- which rejects the agent's own voice by matching
+    // it against the sentence being played, rather than by refusing to listen.
+    //
+    // `micLive` survives for the gap between the call ending and the socket
+    // closing. Silence rather than nothing there, because a socket with no
+    // audio flowing is one Deepgram eventually closes.
+    ws.send(micLive ? e.data : new Int16Array(e.data.byteLength/2).buffer);
+  };
+  meter();
+}
+function meter(){
+  const bars=$("viz").children, data=new Uint8Array(analyser.frequencyBinCount);
+  (function tick(){
+    if(!analyser) return;
+    analyser.getByteTimeDomainData(data);
+    let sum=0; for(let i=0;i<data.length;i++){const v=(data[i]-128)/128;sum+=v*v;}
+    const rms=Math.sqrt(sum/data.length);
+    for(let i=0;i<bars.length;i++){
+      const k=1-Math.abs(i-(bars.length-1)/2)/bars.length;
+      bars[i].style.height=Math.max(4,Math.min(24,rms*190*k+4))+"px";
+    }
+    rafId=requestAnimationFrame(tick);
+  })();
+}
+
+function onBridge(ev){
+  if(ev.type==="speech_started"){
+    // NOT a barge-in trigger.
+    //
+    // It was, and it was wrong: this is bare voice-activity detection, and
+    // LiveKit's published measurement is that **51% of VAD-triggered
+    // barge-ins are false positives**. On a laptop the commonest false
+    // positive is the agent's own voice coming back through the speakers, so
+    // the desk cut itself off mid-sentence and started listening to itself.
+    //
+    // The microphone is muted while the desk speaks, so anything arriving
+    // here during that window is echo or room noise. Interruption belongs on
+    // a real transcript with real words in it -- see `transcript` below.
+    if(!speaking){ tell("<b>Listening…</b>"); status("On a call — listening","hear"); }
+    return;
+  }
+  if(ev.type==="transcript"){
+    // This is where interruption is decided -- on words, not on voice
+    // activity. Anything arriving while the desk is talking has to prove it
+    // is the caller and not the speakers before it stops the sentence.
+    if(speaking){
+      if(!isBargeIn(ev)) return;
+      stopSpeaking();
+      status("On a call — listening","hear");
+    }
+    if(ev.final) finalText=(finalText+" "+ev.text).trim(); else partial=ev.text;
+    showLive(finalText||partial);
+    if(ev.speech_final) commit();
+    return;
+  }
+  if(ev.type==="utterance_end" && finalText){
+    // Backstop. On a noisy line the endpointer may never grow confident enough
+    // to close the turn; the transcript going quiet is the other signal. Two
+    // signals, because either one alone leaves a caller unanswered.
+    commit();
+  }
+}
+function showLive(text){
+  if(!text) return;
+  if(!liveRow) liveRow=line("you",text,"you live");
+  else liveRow.querySelector(".said").textContent=text;
+  $("tape").scrollTop=$("tape").scrollHeight;
+}
+function commit(){
+  const text=(finalText||partial).trim();
+  if(!text||ended){ finalText=""; partial=""; return; }
+  // Spoken over the desk while it was still working out the last answer --
+  // over the "one moment", most often, which is exactly when a caller adds
+  // "...actually, make it Thursday". Held rather than dropped: the turn in
+  // flight cannot be redirected, but the words must not disappear, and
+  // `send` flushes them the moment it is free. Dropping them silently is how
+  // a caller ends up repeating themselves to a line that heard them.
+  if(busy){ finalText=text; partial=""; return; }
+  finalText=""; partial="";
+  if(liveRow){liveRow.remove();liveRow=null;}
+  line("you",text); send(text);
+}
+
+async function post(path,body){
+  const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.error||("HTTP "+r.status));
+  return d;
+}
+/* Say something while the turn is being worked out.
+
+   `/api/turn` is one blocking request that returns when the whole turn is
+   done. A turn that looks a doctor up and then searches slots is two tool
+   calls and three model round-trips before a single byte is synthesised, and
+   the caller hears all of it as nothing at all. Two seconds of silence on a
+   phone is not experienced as latency, it is experienced as the line having
+   dropped -- so the caller says "hello?", which arrives as a new utterance
+   and costs another turn.
+
+   A receptionist does not go quiet while they look at a screen. The lines
+   come from `voice/pacing.py` via `/api/config`, because they are
+   caller-facing copy in three languages and that does not belong in a page. */
+function holdAfter(){
+  let cancelled=false, playing=null;
+  const timer=setTimeout(()=>{
+    if(cancelled||ended||speaking) return;
+    const lines=(holdLines&&(holdLines[language||"en-IN"]||holdLines["en-IN"]))||[];
+    if(!lines.length) return;
+    // Rotated, not random-with-repeats. The same three words at every pause is
+    // the most recognisable tell there is, because a caller hears it four
+    // times in ninety seconds.
+    const said=lines[holdAt++ % lines.length];
+    line("agent",said,"agent live");   // faded: heard, but not part of the record
+    playing=speak([said],{quiet:true});
+  },fillAfterMs);
+  return {
+    cancel(){ cancelled=true; clearTimeout(timer); },
+    settle(){ return playing||Promise.resolve(true); },
+  };
+}
+
+async function send(text){
+  busy=true; tell("…");
+  const hold=holdAfter();
+  try{
+    const d=await post("/api/turn",{call_id:callId,text,language});
+    if(d.language) language=d.language;
+    hold.cancel();
+    // Never talk over our own filler. It is under a second, and cutting it
+    // off mid-word to start the real answer sounds worse than the wait.
+    await hold.settle();
+    line("agent",d.reply||"…",d.blocked?"agent guard":"agent");
+    render(d); busy=false;
+    // `false` means the caller talked over this reply and a newer turn is
+    // already running. Everything below belongs to a conversation that has
+    // moved on, and running it would stamp stale status over the live one.
+    if(!await speak(d.clips&&d.clips.length?d.clips:d.reply)) return;
+    if(d.terminal) return finish(d.state);
+    tell("<b>Listening…</b>"); status("On a call — listening","hear");
+    if(finalText.trim()) commit();   // whatever they said while we were working
+  }catch(e){ hold.cancel(); busy=false; line("",String(e.message),"note"); }
+}
+
+async function begin(){
+  ended=false; language=null; finalText=""; partial=""; liveRow=null;
+  speaking=false; saying=""; holdAt=0; busy=false;
+  $("idle").classList.add("hide"); $("live").classList.remove("hide");
+  $("tape").textContent=""; rise($("live"));
+  status("Connecting…","on"); tell("Connecting…");
+  try{
+    const cfg=await (await fetch("/api/config")).json();
+    holdLines=cfg.hold_lines||null;
+    fillAfterMs=cfg.fill_after_ms||fillAfterMs;
+    const d=await post("/api/start",{});
+    callId=d.call_id; line("agent",d.reply); render(d);
+    if(cfg.live_stt) await openMic(cfg.bridge);
+    // The greeting is interruptible like anything else. Callers talk over
+    // greetings constantly -- they know what a clinic line says -- and a
+    // greeting that cannot be cut into is the first thing that gives the
+    // line away, on the first utterance of the call.
+    if(!await speak(d.clips&&d.clips.length?d.clips:d.reply)) return;
+    tell("<b>Listening…</b>"); status("On a call — listening","hear");
+  }catch(e){ line("",String(e.message),"note"); status("Not connected",""); }
+}
+function finish(state){
+  ended=true; micLive=false; stopSpeaking();
+  cancelAnimationFrame(rafId); analyser=null;
+  if(ws){ try{ws.send("done");ws.close();}catch(e){} ws=null; }
+  if(mic){ mic.getTracks().forEach(t=>t.stop()); mic=null; }
+  if(ctx){ ctx.close(); ctx=null; }
+  status(state==="wrap"?"Call ended — booked":"Call ended","");
+  tell(state==="wrap"?"<b>Booked.</b> The call has ended.":"The call has ended.");
+  $("end").textContent="New call";
+  $("end").onclick=()=>{$("end").textContent="End call";$("end").onclick=hangUp;begin();};
+}
+const hangUp=()=>finish("ended");
+
+$("start").addEventListener("click",begin);
+$("end").addEventListener("click",hangUp);
+$("typed").addEventListener("keydown",e=>{
+  if(e.key!=="Enter") return;
+  e.preventDefault();
+  const v=$("typed").value.trim(); if(!v) return;
+  $("typed").value=""; stopSpeaking(); line("you",v); send(v);
+});
+
+fetch("/api/config").then(r=>r.json()).then(c=>{
+  $("clinic").textContent=c.clinic; document.title=c.clinic;
+  $("foot").textContent=c.live_stt
+    ? "Listening streams live; the language is detected as you speak."
+    : "No speech key set — type instead.";
+}).catch(()=>{});
+
+loadCalendar();
+rise($("idle").firstElementChild);
+</script>
+</body>
+</html>

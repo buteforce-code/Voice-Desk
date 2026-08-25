@@ -7,12 +7,18 @@ argument fails validation instead of having it silently dropped.
 
 from __future__ import annotations
 
-from datetime import datetime
+import re
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_BARE_CLOCK = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?")
+"""`17:00` or `17:00:30`. Anchored with `fullmatch` at the call site, so a real
+ISO timestamp -- which contains a colon-separated time but much else besides --
+is never mistaken for one and is left for pydantic to parse properly."""
 
 
 class Strict(BaseModel):
@@ -96,6 +102,17 @@ class ToolContext(Strict):
     the subject from here rather than accepting one from the model, so
     "whose appointments?" is not a question the model gets to answer."""
 
+    caller_msisdn: str | None = None
+    """The ANI -- the number this call arrived on, from the telephony leg.
+
+    Known for every call, and NOT proof of anything: a shared household handset
+    is the norm here (see `ambiguous-003`), so this identifies a phone and never
+    a person. `verified_msisdn` is the one that survived a challenge, and the
+    two are kept apart so a tool cannot reach for whichever is populated.
+
+    A new booking writes this. Reading or changing an EXISTING appointment
+    reads `verified_msisdn` and nothing else."""
+
 
 class ToolResult(Strict):
     """Uniform envelope. One shape for every tool, success or failure."""
@@ -115,8 +132,18 @@ class ToolResult(Strict):
 class GetClinicInfoIn(Strict):
     field: Literal[
         "opd_hours", "address", "consult_fee", "specialties",
-        "doctors", "prep_instructions", "languages",
+        "doctors", "prep_instructions", "languages", "default_specialty",
     ]
+    """`default_specialty` is the clinic's own routing policy: where it starts a
+    caller who does not yet know which department they need.
+
+    It is deliberately a CONFIG LOOKUP and not a judgement. The value is the
+    same sentence whatever the caller has described, which is the test that
+    separates it from triage -- an agent that answered "neurology" to a
+    headache and "gastroenterology" to stomach pain would be practising
+    medicine. Answering "General Medicine, that is where we start everyone" is
+    reading the clinic's front-desk policy aloud, and it is what a human
+    receptionist says twenty times a day."""
     specialty: str | None = None
 
 
@@ -138,6 +165,38 @@ class FindSlotsIn(Strict):
     earliest: datetime | None = None
     latest: datetime | None = None
     limit: Annotated[int, Field(ge=1, le=10)] = 5
+
+    @field_validator("earliest", "latest", mode="before")
+    @classmethod
+    def _expand_bare_clock_time(cls, v: object) -> object:
+        """Accept `"17:00"` and read it as today at five o'clock.
+
+        The model emits a bare clock time routinely -- it is answering "this
+        evening", and the hour is the only part it was told. Pydantic rejected
+        it, the registry returned `invalid_arguments`, and the agent reported
+        the refusal to the caller as **"there are no evening appointments"**.
+        That sentence is false, it is about the agent's own malformed call
+        rather than the clinic's day, and the caller has no way to tell.
+
+        The same class of leniency as `_clinic_local` in `scheduling.py`, which
+        attaches the clinic's zone to a naive datetime for the same reason: the
+        model was told every time is clinic-local, so that is what it means.
+        This produces the naive value that function then zones.
+
+        The date comes from UTC today. Within OPD hours the clinic's date and
+        UTC's agree for `Asia/Kolkata`; they diverge only before about half
+        past five in the morning local time, when the clinic is shut and there
+        is nothing to find either way. A tenant far enough west for that to
+        bite needs the date resolved against `TenantConfig.timezone` instead --
+        and a `clinic_id` is not in scope here, which is the honest reason this
+        is a boundary convenience rather than a general date parser.
+        """
+        if not isinstance(v, str):
+            return v
+        text = v.strip()
+        if not _BARE_CLOCK.fullmatch(text):
+            return v
+        return f"{datetime.now(UTC).date().isoformat()}T{text}"
 
 
 class SlotOut(Strict):
@@ -193,6 +252,45 @@ class FindAppointmentsOut(Strict):
 
 
 # --------------------------------------------------------------------------
+# find_doctors  -- AUTONOMOUS, side-effect free, speculatively prefetchable.
+#
+# Added because the agent could not answer "I want Dr. Anitha Sundaresan".
+# `find_slots` takes a `doctor_id` UUID and NOTHING in the tool surface turned
+# a spoken name into one, so a caller naming their own doctor -- the single
+# commonest way an appointment call opens -- was told she could not be found,
+# however carefully they spelled it. `get_clinic_info(field="doctors")` returns
+# the roster as a sentence of prose, which is not something a `doctor_id` can
+# be read out of.
+#
+# PROJECT.md D10 is this shape exactly, and `codeswitch-007` opens with it.
+# --------------------------------------------------------------------------
+
+
+class FindDoctorsIn(Strict):
+    name: Annotated[str, Field(max_length=80)] | None = None
+    """A name as the CALLER said it, not as the clinic spells it.
+
+    Matched loosely on purpose. Speech recognition mangles Indian names
+    routinely -- one live call produced "Anita Sondar", then "Anita Sutarisan",
+    for Dr. Anitha Sundaresan -- and a lookup that only accepts the exact
+    string is a lookup that fails every time it is most needed. Getting a
+    shortlist back and reading it out is what a receptionist does.
+    """
+
+    specialty: str | None = None
+
+
+class DoctorOut(Strict):
+    doctor_id: UUID
+    full_name: str
+    specialty: str
+
+
+class FindDoctorsOut(Strict):
+    doctors: list[DoctorOut]
+
+
+# --------------------------------------------------------------------------
 # hold_slot  -- AUTONOMOUS but MUTATING. Never speculative.
 # --------------------------------------------------------------------------
 
@@ -214,8 +312,57 @@ class HoldSlotOut(Strict):
 
 class ConfirmBookingIn(Strict):
     slot_id: UUID
-    patient_msisdn: Msisdn
+    contact: Literal["caller_ani"] | Msisdn
+    """WHICH number the confirmation goes to -- designated, not transcribed.
+
+    `"caller_ani"` means the caller asked for the number they are calling from;
+    the server fills in the ANI and the model never handles the digits. Any
+    other value is a different number the caller spoke aloud, and is validated
+    as one.
+
+    This was a bare `Msisdn` the model had to fill, and it is the second reason
+    booking accuracy sat at zero. A caller who says "same number" (`normal-001`,
+    `normal-008`, `bad_input-007` all do, because that is how people talk) gives
+    the model no digits, and the model has no other way to reach the ANI. Live
+    runs show it asking for the number turn after turn and then sending
+    `"unknown"`. There was no expressible correct call.
+
+    Splitting designation from digits also narrows the transcription failure:
+    the ANI path cannot be misheard, because nothing hears it.
+
+    It does NOT make substitution impossible, and no claim here should suggest
+    otherwise. A model can still designate `"caller_ani"` when the caller asked
+    for someone else's phone -- `bad_input-008` is written for exactly that lie
+    and grades it with `tools_forbidden: confirm_booking`. That case assumed all
+    along that the ANI was "right there"; until now it was not reachable at all,
+    and the trap was hypothetical. This makes it real."""
+
     patient_display_name: Annotated[str, Field(min_length=1, max_length=120)]
+
+    booking_for: Literal["self", "someone_else"] = "self"
+    """Whose appointment this is.
+
+    Asked because it changes what the other answers mean: when a daughter rings
+    for her father, the NAME is his and the NUMBER is hers, and a register that
+    conflates the two sends the reminder to the wrong person and files the
+    visit under the wrong patient. `ambiguous-003` is about exactly this -- a
+    shared household handset -- and it is the normal case here, not an edge."""
+
+    patient_age: Annotated[int, Field(ge=0, le=120)] | None = None
+    patient_gender: Literal["female", "male", "other", "not_stated"] | None = None
+    """Registration demographics, and deliberately no more than that.
+
+    Age and gender are what a front desk writes on a card before anyone has
+    seen a doctor: they route to the right clinic list and they are on every
+    paper form in the country. They are NOT clinical -- CLAUDE.md rule 3
+    forbids a clinical column, and nothing here records a symptom, a history,
+    a medication or a reason for the visit. If a future field seems to need
+    one, that is the escalation the rule asks for, not a schema edit.
+
+    Both optional and both refusable. A caller who does not want to say is
+    booked anyway; `not_stated` exists so declining is recordable rather than
+    indistinguishable from never having been asked."""
+
     idempotency_key: IdempotencyKey
 
     @field_validator("patient_display_name")

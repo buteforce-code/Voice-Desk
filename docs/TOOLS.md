@@ -46,8 +46,8 @@ measured against nothing. Same argument as the invented consult fee.
 | `get_clinic_info` | autonomous | no | ✅ |
 | `find_slots` | autonomous | no | ✅ |
 | `find_appointments` | autonomous | no | ❌ identity-gated · takes **no** msisdn, subject comes from the session |
-| `hold_slot` | autonomous | **yes** | ❌ |
-| `confirm_booking` | explicit approval | yes | ❌ |
+| `hold_slot` | autonomous | **yes** | ❌ pins the ONE slot a write may target |
+| `confirm_booking` | explicit approval | yes | ❌ refuses a slot this call does not hold · contact is **designated**, not transcribed |
 | `reschedule_appointment` | explicit approval | yes | ❌ identity-gated |
 | `cancel_appointment` | explicit approval | yes | ❌ identity-gated |
 | `transfer_to_human` | autonomous | no | ✅ |
@@ -55,7 +55,7 @@ measured against nothing. Same argument as the invented consult fee.
 ## Three design choices worth naming
 
 **1. Authority never comes from model output.**
-`ToolContext` is built by the call session. The model cannot assert its own `clinic_id`, its own `state`, or its own `approval_token`. An `explicit_approval` tool checks `ctx.state == "approval"` and a token the state machine issued — so the sole path to a write runs through the one state that requires the caller to have said yes.
+`ToolContext` is built by the call session. The model cannot assert its own `clinic_id`, its own `state`, or its own `approval_token`. An `explicit_approval` tool checks `ctx.state == "execute"` **and** a token minted on entry to `approval` — so the sole path to a write runs through the one state that requires the caller to have said yes, and the graph proves the confirmation came first. (This doc said `approval` until 2026-08-21; PROJECT.md D13 moved it, for the reason recorded there — checking only the token leaves the edge table decorative.)
 
 **2. Verification is in the session, not in the arguments.**
 `ToolContext.identity_verified` is set by the state machine when the `identify` state completes a DOB challenge. The registry refuses `find_appointments`, `reschedule_appointment` and `cancel_appointment` without it, and the subject of a lookup comes from `ToolContext.verified_msisdn` — never from a field the model fills.
@@ -63,6 +63,17 @@ measured against nothing. Same argument as the invented consult fee.
 This was originally `identity_verified: Literal[True]` on the three tool *input* schemas, described here as making an unverified reschedule inexpressible. It did not. The model writes tool arguments, and `Literal[True]` admits exactly one value, so the model always set it and validation always passed — **a control that cannot fail is not a control.** `find_appointments` was the live consequence: AUTONOMOUS tier, model-supplied phone number, so it answered "does this number have appointments at this clinic" for any number, at any point in a call.
 
 Two eval cases had already spotted it and contradicted each other. `bad_input-009`: *"it does nothing whatsoever to stop a model from writing True because the field demanded it."* `malicious-003`: *"an unverified cancellation is not expressible in the schema."* The pessimistic one was right. Fixed 2026-08-19; `tests/test_identity.py` is the reason the optimistic one is now also true.
+
+**2b. Nor does the model decide *which* subject or *which* slot.**
+Three fields moved server-side, one at a time, for the same reason each time:
+
+| Was model-supplied | Now | Why |
+|---|---|---|
+| `find_appointments(patient_msisdn=…)` | `ctx.verified_msisdn` | it was an enumeration oracle (D12) |
+| `confirm_booking(patient_msisdn=…)` | `contact: "caller_ani" \| Msisdn`, resolved from `ctx.caller_msisdn` | a number the model transcribed receives the confirmation SMS (D24) |
+| `confirm_booking(slot_id=…)`, unchecked | still an argument, but refused unless **this call holds that slot** (D25) | which appointment gets made was decided by a UUID the model repeated back |
+
+The pattern is worth stating once: a value the model restates is a value the model can get wrong or be talked out of. Where the server already knows the answer, the argument is removed or bound. `contact` is the one that keeps a model-side decision on purpose — *which* number, because only the caller knows that — while removing the digits, because nothing is served by the model handling those.
 
 **3. Speculation is tiered, not banned and not free.**
 Prefetching `find_slots` on high-confidence intent saves 200–400ms. Prefetching `confirm_booking` would mean acting on a half-heard sentence before the caller finished — textbook excessive agency.

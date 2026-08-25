@@ -23,6 +23,7 @@ from voicedesk.adapters.memory import InMemoryAdapter
 from voicedesk.agent import Agent
 from voicedesk.audit import InMemoryAudit
 from voicedesk.llm import LanguageModel
+from voicedesk.prompts import PROMPT_VERSION
 from voicedesk.state import CallSession, VersionStamp
 from voicedesk.tenants import Tenant, load_tenants
 from voicedesk.tools.registry import ToolRegistry
@@ -90,7 +91,7 @@ def build_world(
     tenant_slug: str = "meridian",
     language: str = "en-IN",
     trace_id: str | None = None,
-    prompt_version: str = "prompt-2026-08-21",
+    prompt_version: str = PROMPT_VERSION,
     model_version: str = "unknown",
     adapter: InMemoryAdapter | None = None,
     clock: datetime | None = None,

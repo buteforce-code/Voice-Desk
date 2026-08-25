@@ -1,3 +1,22 @@
+# The DEMO roster: one doctor per department, two in General Medicine.
+#
+# A separate tenant rather than a trimmed `meridian.yaml`, because that file is
+# an EVAL FIXTURE as much as a clinic. Six cases name doctors on it by hand --
+# `ambiguous-002` exists precisely BECAUSE there are several Anithas, and
+# `codeswitch-001`, `-007` and `-008` and `bad_input-004` each assert a
+# specific one. Deleting them to tidy a demo would edit six committed cases
+# into passing, which the eval rules forbid in as many words.
+#
+# Nine doctors is also what makes availability legible. Twenty-five consultants
+# generate over five hundred slots a day and nothing ever visibly fills; nine
+# generate a diary a person can read, where one booking is a square that
+# changes. That is the whole point of showing a doctor the calendar.
+#
+# Everything else -- hours, fees, address, prep, languages -- is identical, so
+# a difference between the two tenants is a difference in the roster and
+# nothing else. Multi-tenancy is the product (D5); this is the second tenant
+# proving it.
+
 # Meridian Speciality Clinic — the demo tenant.
 #
 # FICTIONAL. PROJECT.md D5: every shippable artifact uses an invented clinic
@@ -26,8 +45,8 @@
 # in passing are chosen, not derived — full reconciliation belongs with fixture
 # authoring, which PROJECT.md §5 already lists as open.
 
-clinic_id: d0c70000-0000-4000-8000-000000000001
-slug: meridian
+clinic_id: d0c70000-0000-4000-8000-000000000002
+slug: meridian_demo
 display_name: Meridian Speciality Clinic
 timezone: Asia/Kolkata
 config_version: "2026-08-19.1"
@@ -53,7 +72,7 @@ info:
     Cardiology, Dermatology, ENT, Endocrinology, General Medicine,
     Gynaecology, Orthopaedics, Paediatrics
   doctors: >-
-    Twenty-five consultants across eight departments. Ask for a specialty and
+    Nine consultants, one for each department and two in General Medicine. Ask for a specialty and
     the desk will read out who is available.
   default_specialty: >-
     General Medicine is where the clinic starts anyone who is not already
@@ -87,58 +106,19 @@ doctors:
   - doctor_id: d0c70001-0000-4000-8000-000000000001
     full_name: Dr. Anitha Varadhan
     specialty: Cardiology
-  - doctor_id: d0c70001-0000-4000-8000-000000000002
-    full_name: Dr. Vasanth Ramaswamy
-    specialty: Cardiology
-  - doctor_id: d0c70001-0000-4000-8000-000000000003
-    full_name: Dr. Sanjay Bhandari
-    specialty: Cardiology
-
-  # -- Dermatology -----------------------------------------------------
   - doctor_id: d0c70002-0000-4000-8000-000000000001
     full_name: Dr. Shalini Rege
     specialty: Dermatology
-  - doctor_id: d0c70002-0000-4000-8000-000000000002
-    full_name: Dr. Meenakshi Iyer
-    specialty: Dermatology
-
-  # -- ENT — the codeswitch-009 pair. Keep both. -----------------------
-  - doctor_id: d0c70003-0000-4000-8000-000000000001
-    full_name: Dr. Thirumalai Sekar
-    specialty: ENT
-  - doctor_id: d0c70003-0000-4000-8000-000000000002
-    full_name: Dr. Thirumurugan Sekaran
-    specialty: ENT
   - doctor_id: d0c70003-0000-4000-8000-000000000003
     full_name: Dr. Prakash Menon
     specialty: ENT
 
   # -- Endocrinology ---------------------------------------------------
-  - doctor_id: d0c70004-0000-4000-8000-000000000001
-    full_name: Dr. Karthik Venkatesan
-    specialty: Endocrinology
   - doctor_id: d0c70004-0000-4000-8000-000000000002
     full_name: Dr. Ravi Chandrasekar
     specialty: Endocrinology
-  - doctor_id: d0c70004-0000-4000-8000-000000000003
-    full_name: Dr. Karthikeyan Balasubramanian
-    specialty: Endocrinology
-
-  # -- General Medicine — the Anitha cluster. Keep all four. -----------
   - doctor_id: d0c70005-0000-4000-8000-000000000001
     full_name: Dr. Anitha Sundaresan
-    specialty: General Medicine
-  - doctor_id: d0c70005-0000-4000-8000-000000000002
-    full_name: Dr. Anitha Raghavan
-    specialty: General Medicine
-  - doctor_id: d0c70005-0000-4000-8000-000000000003
-    full_name: Dr. Anitha Raghunathan
-    specialty: General Medicine
-  - doctor_id: d0c70005-0000-4000-8000-000000000004
-    full_name: Dr. Suresh Iyer
-    specialty: General Medicine
-  - doctor_id: d0c70005-0000-4000-8000-000000000005
-    full_name: Dr. Ramesh Pillai
     specialty: General Medicine
   - doctor_id: d0c70005-0000-4000-8000-000000000006
     full_name: Dr. Ragunandan
@@ -148,28 +128,9 @@ doctors:
   - doctor_id: d0c70006-0000-4000-8000-000000000001
     full_name: Dr. Fathima Rasheed
     specialty: Gynaecology
-  - doctor_id: d0c70006-0000-4000-8000-000000000002
-    full_name: Dr. Sanjana Rao
-    specialty: Gynaecology
-
-  # -- Orthopaedics ----------------------------------------------------
   - doctor_id: d0c70007-0000-4000-8000-000000000001
     full_name: Dr. Vikram Shanmugam
     specialty: Orthopaedics
-  - doctor_id: d0c70007-0000-4000-8000-000000000002
-    full_name: Dr. Kavitha Selvanayagam
-    specialty: Orthopaedics
-  - doctor_id: d0c70007-0000-4000-8000-000000000003
-    full_name: Dr. Suresh Raghunathan
-    specialty: Orthopaedics
-
-  # -- Paediatrics -----------------------------------------------------
   - doctor_id: d0c70008-0000-4000-8000-000000000001
     full_name: Dr. Priya Deshmukh
-    specialty: Paediatrics
-  - doctor_id: d0c70008-0000-4000-8000-000000000002
-    full_name: Dr. Naveen Alagappan
-    specialty: Paediatrics
-  - doctor_id: d0c70008-0000-4000-8000-000000000003
-    full_name: Dr. Naveen Balakrishnan
     specialty: Paediatrics

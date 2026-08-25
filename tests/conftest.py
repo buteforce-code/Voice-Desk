@@ -285,6 +285,7 @@ def make_ctx(
     trace_id: str | None = None,
     identity_verified: bool = False,
     verified_msisdn: str | None = None,
+    caller_msisdn: str | None = VERIFIED_MSISDN,
 ) -> ToolContext:
     """Build a server-side context.
 
@@ -302,6 +303,7 @@ def make_ctx(
         speculative=speculative,
         identity_verified=identity_verified,
         verified_msisdn=verified_msisdn,
+        caller_msisdn=caller_msisdn,
     )
 
 

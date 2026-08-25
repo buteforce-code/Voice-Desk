@@ -91,6 +91,7 @@ def new_session(tenant: object) -> CallSession:
         trace_id=f"demo-{uuid4().hex[:8]}",
         versions=VersionStamp("prompt-v1", "scripted-no-model"),
         dry_run=False,
+        ani=CALLER,
     )
 
 
@@ -119,6 +120,13 @@ async def scenario_booking(registry, adapter, audit, tenant) -> None:
 
     chosen = slots[0]
     session.transition_to(CallState.DRAFT, "slot proposed")
+
+    await registry.invoke(
+        "hold_slot", {"slot_id": chosen["slot_id"]}, session.tool_context()
+    )
+    ok("one slot pinned — a hold is not a booking, and self-expires")
+    note("confirm_booking refuses any slot this call does not hold (D25)")
+
     session.transition_to(CallState.VALIDATE, "draft complete")
     note("nothing has been written yet — draft never writes")
 
@@ -130,13 +138,14 @@ async def scenario_booking(registry, adapter, audit, tenant) -> None:
         "confirm_booking",
         {
             "slot_id": chosen["slot_id"],
-            "patient_msisdn": CALLER,
+            "contact": "caller_ani",
             "patient_display_name": "Ravi Kumar",
             "idempotency_key": uuid4().hex,
         },
         session.tool_context(),
     )
     ok(f"booked {booked.data['appointment_id'][:8]}… with {booked.data['doctor_name']}")
+    note("the number came from the ANI on the session, never from the model")
     agent(f"Confirmed for {booked.data['starts_at'][:16].replace('T', ' ')}.")
 
     session.transition_to(CallState.AUDIT, "rows committed")
@@ -157,7 +166,7 @@ async def scenario_write_outside_execute(registry, tenant) -> None:
         "confirm_booking",
         {
             "slot_id": str(uuid4()),
-            "patient_msisdn": CALLER,
+            "contact": "caller_ani",
             "patient_display_name": "Ravi Kumar",
             "idempotency_key": uuid4().hex,
         },

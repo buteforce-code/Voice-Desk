@@ -25,6 +25,7 @@ point in a call, for anyone who got the agent to ask.
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from conftest import OTHER_MSISDN, VERIFIED_MSISDN, make_ctx, verified_ctx
@@ -215,3 +216,108 @@ def test_the_same_subscriber_normalises_identically(written: str) -> None:
 
 def test_different_subscribers_do_not_normalise_together() -> None:
     assert normalize_msisdn(VERIFIED_MSISDN) != normalize_msisdn(OTHER_MSISDN)
+
+
+# ==========================================================================
+# The contact is designated, not transcribed
+#
+# `ConfirmBookingIn.contact` was a bare `Msisdn` the model had to fill from
+# whatever it heard. A caller who says "same number" gives it no digits, and
+# nothing in the tool surface reached the ANI -- so the correct call was not
+# expressible and live runs sent `"unknown"`. See PROJECT.md D17.
+# ==========================================================================
+
+
+async def test_caller_ani_is_resolved_server_side_not_supplied_by_the_model(
+    registry, adapter, audit
+) -> None:
+    result = await registry.invoke(
+        "confirm_booking",
+        {
+            "slot_id": str(uuid4()),
+            "contact": "caller_ani",
+            "patient_display_name": "Ravi Kumar",
+            "idempotency_key": uuid4().hex,
+        },
+        make_ctx(
+            state="execute",
+            approval_token="minted-at-approval",  # noqa: S106 - a fixture, not a credential
+            dry_run=False,
+            caller_msisdn=VERIFIED_MSISDN,
+        ),
+    )
+
+    assert result.ok, result.error_message
+    assert "confirm_booking" in adapter.calls
+
+
+async def test_a_designated_ani_never_reaches_the_audit_row_as_digits(
+    registry, adapter, audit
+) -> None:
+    """`contact` can also hold a number the caller spoke, so it is redacted on
+    the way to `agent_actions` exactly as `patient_msisdn` was. Staff query
+    those rows; they do not need the number to see what was attempted."""
+    await registry.invoke(
+        "confirm_booking",
+        {
+            "slot_id": str(uuid4()),
+            "contact": OTHER_MSISDN,
+            "patient_display_name": "Ravi Kumar",
+            "idempotency_key": uuid4().hex,
+        },
+        make_ctx(
+            state="execute",
+            approval_token="minted-at-approval",  # noqa: S106 - a fixture, not a credential
+            dry_run=False,
+        ),
+    )
+
+    rows = [r for r in audit.rows if r["tool_name"] == "confirm_booking"]
+    assert rows, "no audit row for the attempt"
+    assert rows[-1]["args_redacted"]["contact"] == "<redacted>"
+
+
+async def test_a_leg_with_no_ani_refuses_rather_than_inventing_a_number(
+    registry, adapter
+) -> None:
+    """The old path reached `"+919876543210"` through an `or` fallback. A
+    plausible number is the worst possible default for a field that receives
+    the confirmation SMS: the booking succeeds, the message goes to a stranger,
+    and the transcript reads clean."""
+    result = await registry.invoke(
+        "confirm_booking",
+        {
+            "slot_id": str(uuid4()),
+            "contact": "caller_ani",
+            "patient_display_name": "Ravi Kumar",
+            "idempotency_key": uuid4().hex,
+        },
+        make_ctx(
+            state="execute",
+            approval_token="minted-at-approval",  # noqa: S106 - a fixture, not a credential
+            dry_run=False,
+            caller_msisdn=None,
+        ),
+    )
+
+    assert not result.ok
+    assert "confirm_booking" not in adapter.calls
+
+
+def test_the_model_cannot_be_handed_the_ani_to_read_back() -> None:
+    """The digits are not in any tool OUTPUT either.
+
+    Resolving the ANI server-side is pointless if some other tool hands the
+    number back for the model to repeat into a later argument.
+    """
+    from voicedesk.tools import schemas
+
+    outputs = [
+        v
+        for k, v in vars(schemas).items()
+        if k.endswith("Out") and isinstance(v, type) and hasattr(v, "model_fields")
+    ]
+    assert outputs, "no output models found"
+    for model in outputs:
+        assert "patient_msisdn" not in model.model_fields, model.__name__
+        assert "caller_msisdn" not in model.model_fields, model.__name__

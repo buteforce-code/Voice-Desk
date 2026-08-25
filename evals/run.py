@@ -255,6 +255,7 @@ async def cmd_run(
     from evals.report import write_baseline as commit
     from voicedesk.config import ConfigError, Settings
     from voicedesk.llm import build_from_settings
+    from voicedesk.prompts import PROMPT_VERSION
 
     cases, errors = load_cases()
     if errors:
@@ -288,7 +289,7 @@ async def cmd_run(
         results,
         expected,
         version=version,
-        prompt_version="prompt-2026-08-21",
+        prompt_version=PROMPT_VERSION,
         model_version=settings.llm_model,
         concurrency=concurrency,
         repeats=repeats,

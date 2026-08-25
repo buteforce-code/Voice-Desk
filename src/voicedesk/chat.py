@@ -33,6 +33,7 @@ from voicedesk.agent import Agent
 from voicedesk.audit import InMemoryAudit
 from voicedesk.config import ConfigError, Settings
 from voicedesk.llm import build_from_settings
+from voicedesk.prompts import PROMPT_VERSION
 from voicedesk.state import CallSession, VersionStamp
 from voicedesk.tenants import load_tenants
 from voicedesk.tools.registry import ToolRegistry
@@ -59,7 +60,25 @@ def missing_key_notice() -> int:
     return 2
 
 
-async def run(show_trace: bool, show_audit: bool) -> int:
+DEMO_ANI = "+919876543210"
+"""The number this terminal call 'arrives on'.
+
+Fictional, in the valid Indian mobile range. A real leg carries the ANI from
+the telephony provider; there is no leg here, so it is stated explicitly and
+printed on the banner rather than defaulted somewhere quiet.
+
+Without it `confirm_booking` refuses every call in this app. Since D24 the
+model designates `contact="caller_ani"` and the server resolves the digits, so
+a session with no ANI can find slots and hold them and never book. That is the
+correct refusal -- a confirmation sent to a number nobody supplied is worse
+than no booking -- but it made the interactive demo a dead end until this line
+existed.
+"""
+
+
+async def run(
+    show_trace: bool, show_audit: bool, language: str = "en-IN", ani: str = DEMO_ANI
+) -> int:
     structlog.configure(logger_factory=structlog.ReturnLoggerFactory())
 
     try:
@@ -82,8 +101,9 @@ async def run(show_trace: bool, show_audit: bool) -> int:
         clinic_id=tenant.clinic_id,
         call_id=uuid4(),
         trace_id=f"chat-{uuid4().hex[:8]}",
-        versions=VersionStamp("prompt-2026-08-21", settings.llm_model),
+        versions=VersionStamp(PROMPT_VERSION, settings.llm_model),
         dry_run=False,
+        ani=ani,
     )
     agent = Agent(
         tenant=tenant,
@@ -91,11 +111,12 @@ async def run(show_trace: bool, show_audit: bool) -> int:
         registry=registry,
         model=model,
         audit=audit,
-        language="en-IN",
+        language=language,
     )
 
-    print(f"\n{BOLD}{tenant.display_name}{RESET} {DIM}— {settings.gemini_model}, "
-          f"{len(adapter.slots)} slots seeded, dry_run={session.dry_run}{RESET}")
+    print(f"\n{BOLD}{tenant.display_name}{RESET} {DIM}— {settings.llm_model}, "
+          f"{len(adapter.slots)} slots seeded, calling from {ani}, "
+          f"dry_run={session.dry_run}{RESET}")
     print(f"{DIM}type as the caller. ctrl-c or 'bye' to hang up.{RESET}\n")
 
     print(f"{GREEN}agent ›{RESET} {agent.open()}")
@@ -162,8 +183,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="voicedesk.chat")
     parser.add_argument("--trace", action="store_true", help="show tools and states")
     parser.add_argument("--audit", action="store_true", help="dump the audit log")
+    parser.add_argument(
+        "--lang", default="en-IN", choices=["en-IN", "ta-IN", "hi-IN"],
+        help="the caller's language (default en-IN)",
+    )
+    parser.add_argument(
+        "--from", dest="ani", default=DEMO_ANI,
+        help=f"the number the call arrives on (default {DEMO_ANI})",
+    )
     args = parser.parse_args()
-    return asyncio.run(run(args.trace, args.audit))
+    return asyncio.run(run(args.trace, args.audit, args.lang, args.ani))
 
 
 if __name__ == "__main__":

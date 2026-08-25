@@ -52,13 +52,23 @@ async def first_slot(adapter: InMemoryAdapter, tenant, specialty="Cardiology"):
     return slots[0]
 
 
-async def book(adapter, tenant, slot, msisdn=VERIFIED_MSISDN, name="Ravi Kumar"):
+async def book(
+    adapter, tenant, slot, msisdn=VERIFIED_MSISDN, name="Ravi Kumar", call_id=None
+):
+    """Hold, then confirm — the only order the adapter allows.
+
+    The hold is not decoration here. `confirm_booking` refuses a slot the
+    calling session does not hold, so a helper that skipped straight to the
+    write would be exercising a path production cannot reach.
+    """
+    call_id = call_id or uuid4()
+    await adapter.hold_slot(tenant.clinic_id, slot.slot_id, call_id, 120)
     return await adapter.confirm_booking(
         tenant.clinic_id,
         slot_id=slot.slot_id,
         patient_msisdn=msisdn,
         patient_display_name=name,
-        call_id=uuid4(),
+        call_id=call_id,
     )
 
 
@@ -559,3 +569,81 @@ def test_the_tenant_timezone_reaches_the_tool_layer(tenant):
     from voicedesk.tools.scheduling import TenantConfig
 
     assert TenantConfig.from_tenant(tenant).timezone == tenant.timezone
+
+
+# ==========================================================================
+# The write is bound to the hold
+#
+# `hold_slot` is what pins one slot out of a list, and until this landed it
+# was advisory: `confirm_booking` took whatever slot_id it was handed and
+# wrote it. Which appointment got made was therefore decided by a UUID the
+# model repeated back, and a model that transposes two characters, or is
+# talked into naming a different id, books someone else's morning.
+# ==========================================================================
+
+
+async def test_confirming_a_slot_this_call_never_held_is_refused(
+    adapter, tenant
+) -> None:
+    slot = await first_slot(adapter, tenant)
+
+    with pytest.raises(SlotUnavailable):
+        await adapter.confirm_booking(
+            tenant.clinic_id,
+            slot_id=slot.slot_id,
+            patient_msisdn=VERIFIED_MSISDN,
+            patient_display_name="Ravi Kumar",
+            call_id=uuid4(),
+        )
+
+    assert not adapter.appointments, "an unheld slot was written anyway"
+
+
+async def test_confirming_a_slot_another_call_holds_is_refused(
+    adapter, tenant
+) -> None:
+    """The contested case, and the reason this is not merely tidiness: two
+    live calls, one slot, and the loser must not be able to write it by
+    naming the id."""
+    slot = await first_slot(adapter, tenant)
+    theirs, mine = uuid4(), uuid4()
+    await adapter.hold_slot(tenant.clinic_id, slot.slot_id, theirs, 120)
+
+    with pytest.raises(SlotUnavailable):
+        await adapter.confirm_booking(
+            tenant.clinic_id,
+            slot_id=slot.slot_id,
+            patient_msisdn=VERIFIED_MSISDN,
+            patient_display_name="Ravi Kumar",
+            call_id=mine,
+        )
+
+
+async def test_an_expired_hold_does_not_authorize_a_write(adapter, tenant) -> None:
+    """A hold has a TTL for a reason. Honouring an expired one would mean the
+    slot is free to every other caller and still writable by this one."""
+    slot = await first_slot(adapter, tenant)
+    call_id = uuid4()
+    await adapter.hold_slot(tenant.clinic_id, slot.slot_id, call_id, 120)
+    adapter.slots[slot.slot_id].held_until = datetime.now(UTC) - timedelta(seconds=1)
+
+    with pytest.raises(SlotUnavailable):
+        await adapter.confirm_booking(
+            tenant.clinic_id,
+            slot_id=slot.slot_id,
+            patient_msisdn=VERIFIED_MSISDN,
+            patient_display_name="Ravi Kumar",
+            call_id=call_id,
+        )
+
+
+async def test_a_successful_booking_clears_the_hold(adapter, tenant) -> None:
+    """The appointment is the stronger claim. A hold left set outlives a later
+    cancellation and hides a slot that is genuinely free -- and nothing in the
+    register says why."""
+    slot = await first_slot(adapter, tenant)
+    await book(adapter, tenant, slot)
+
+    held = adapter.slots[slot.slot_id]
+    assert held.held_by_call is None
+    assert held.held_until is None

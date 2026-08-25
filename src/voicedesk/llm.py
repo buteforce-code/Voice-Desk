@@ -45,12 +45,21 @@ class ToolCall:
 
     name: str
     args: dict[str, Any] = field(default_factory=dict)
+    call_id: str = ""
+    """The provider's correlation id, echoed back so a result can be paired to
+    the call that asked for it.
+
+    OpenAI-compatible APIs require it and reject a `tool` message without a
+    matching `tool_call_id`. Gemini pairs by name instead and supplies none, so
+    this is empty on that path -- which is why nothing below the seam may read
+    it for anything but pairing."""
 
 
 @dataclass(frozen=True)
 class ToolResult:
     name: str
     payload: dict[str, Any]
+    call_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,7 +169,13 @@ class GeminiModel:
                     text_parts.append(part.text)
                 fn = getattr(part, "function_call", None)
                 if fn is not None:
-                    calls.append(ToolCall(name=fn.name, args=dict(fn.args or {})))
+                    calls.append(
+                        ToolCall(
+                            name=fn.name,
+                            args=dict(fn.args or {}),
+                            call_id=f"gemini-{len(calls)}",
+                        )
+                    )
 
         usage = getattr(response, "usage_metadata", None)
         return ModelTurn(
@@ -251,24 +266,49 @@ def to_function_declarations(tools: Sequence[dict[str, Any]]) -> list[dict[str, 
 def _to_gemini(history: Sequence[Message]) -> list[dict[str, Any]]:
     """Flatten our history into Gemini `contents`.
 
-    Tool results are rendered as text rather than as `function_response` parts.
-    That is deliberate: it keeps one representation of a turn across every
-    provider behind this seam, and it means a provider swap does not silently
-    change what the model sees.
+    Tool calls and results are `function_call` / `function_response` parts --
+    the provider-native shape, not text.
+
+    They were text until the eval suite showed what that costs. Rendering a
+    call as `<tool_calls>find_slots({...})</tool_calls>` puts the calling
+    convention *in the content channel*, and a model reading its own history
+    cannot tell a transcript of what it did from an example of how to speak.
+    It stopped calling `find_slots` and started saying the tag out loud, in
+    Tamil, to the caller. The native parts are a different field on the wire,
+    so the confusion is not expressible.
+
+    The earlier docstring here defended text on the grounds that one
+    representation across providers keeps a swap from changing what the model
+    sees. That is true and it is not worth this: what a provider swap must
+    preserve is the *meaning* of a turn, and every provider behind this seam
+    has a native encoding for exactly this meaning. Uniform-but-wrong is not
+    the invariant worth holding.
     """
     contents: list[dict[str, Any]] = []
     for message in history:
         if message.role == "caller":
             contents.append({"role": "user", "parts": [{"text": message.text}]})
+        elif message.role == "agent" and message.tool_calls:
+            contents.append({
+                "role": "model",
+                "parts": [
+                    {"function_call": {"name": c.name, "args": c.args}}
+                    for c in message.tool_calls
+                ],
+            })
         elif message.role == "agent" and message.text:
             contents.append({"role": "model", "parts": [{"text": message.text}]})
         elif message.role == "tool":
-            rendered = "\n".join(
-                f"{r.name} returned: {json.dumps(r.payload, default=str)}"
-                for r in message.tool_results
-            )
-            fenced = f"<tool_results>\n{rendered}\n</tool_results>"
-            contents.append({"role": "user", "parts": [{"text": fenced}]})
+            # Gemini pairs a response to its call by NAME, not by id, and takes
+            # them as user-role parts. `response` must be an object: a bare
+            # list or scalar is rejected.
+            contents.append({
+                "role": "user",
+                "parts": [
+                    {"function_response": {"name": r.name, "response": r.payload}}
+                    for r in message.tool_results
+                ],
+            })
     return contents
 
 
@@ -324,6 +364,13 @@ class OpenRouterModel:
             "model": self._model,
             "messages": _to_openai(system, history),
             "temperature": 0.2,
+            # A caller turn is one or two sentences. Capping the reply is not
+            # only cheaper -- a shorter completion reaches its last token
+            # sooner, so the first audio starts sooner, and a reply that ends
+            # before the caller's patience does is less likely to be talked
+            # over. The prompt asks for brevity; this is what happens when the
+            # model does not oblige.
+            "max_tokens": 300,
         }
         if tools:
             payload["tools"] = to_openai_tools(tools)
@@ -362,7 +409,13 @@ class OpenRouterModel:
                 # validation and the refusal is audited, rather than crashing
                 # the turn.
                 args = {}
-            calls.append(ToolCall(name=fn.get("name", ""), args=args))
+            calls.append(
+                ToolCall(
+                    name=fn.get("name", ""),
+                    args=args,
+                    call_id=str(call.get("id") or f"call-{len(calls)}"),
+                )
+            )
 
         usage = body.get("usage") or {}
         return ModelTurn(
@@ -394,19 +447,44 @@ def to_openai_tools(tools: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _to_openai(system: str, history: Sequence[Message]) -> list[dict[str, Any]]:
+    """Flatten our history into OpenAI-compatible `messages`.
+
+    Native `tool_calls` on the assistant turn, one `tool` message per result,
+    paired by `tool_call_id`. See `_to_gemini` for why these are not text.
+
+    The pairing is not cosmetic: an OpenAI-compatible endpoint rejects a `tool`
+    message whose id matches no preceding assistant call, and silently ignores
+    an assistant call that never gets a result.
+    """
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     for message in history:
         if message.role == "caller":
             messages.append({"role": "user", "content": message.text})
+        elif message.role == "agent" and message.tool_calls:
+            messages.append({
+                "role": "assistant",
+                "content": message.text or None,
+                "tool_calls": [
+                    {
+                        "id": c.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": c.name,
+                            "arguments": json.dumps(c.args, default=str),
+                        },
+                    }
+                    for c in message.tool_calls
+                ],
+            })
         elif message.role == "agent" and message.text:
             messages.append({"role": "assistant", "content": message.text})
         elif message.role == "tool":
-            rendered = "\n".join(
-                f"{r.name} returned: {json.dumps(r.payload, default=str)}"
-                for r in message.tool_results
-            )
-            fenced = f"<tool_results>\n{rendered}\n</tool_results>"
-            messages.append({"role": "user", "content": fenced})
+            for r in message.tool_results:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": r.call_id,
+                    "content": json.dumps(r.payload, default=str),
+                })
     return messages
 
 

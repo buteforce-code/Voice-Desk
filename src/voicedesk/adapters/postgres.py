@@ -238,6 +238,46 @@ class PostgresAdapter:
 
     # -- holds -----------------------------------------------------------
 
+    async def find_doctors(
+        self, clinic_id: UUID, *, name: str | None, specialty: str | None
+    ) -> list[tuple[UUID, str, str]]:
+        """Active doctors, narrowed by specialty in SQL and by name in Python.
+
+        The loose name match deliberately does NOT go into the query. Postgres
+        can do it -- `pg_trgm` with a similarity threshold -- and that would
+        put the matching rule in two places, tuned twice, drifting apart. A
+        clinic roster is tens of rows, not millions; fetching the department
+        and scoring it in one place is both faster to reason about and the
+        same answer the in-memory adapter gives, which is what the protocol
+        test is for.
+        """
+        async with self._tenant_tx(clinic_id) as conn:
+            rows = await conn.fetch(
+                """
+                select id, full_name, specialty
+                  from doctors
+                 where clinic_id = $1
+                   and active
+                   and ($2::text is null or lower(specialty) = lower($2))
+                 order by full_name
+                """,
+                clinic_id,
+                specialty,
+            )
+
+        found = [(r["id"], r["full_name"], r["specialty"]) for r in rows]
+        if not name:
+            return found
+
+        from voicedesk.adapters.memory import _NAME_MATCH, _name_key, _name_score
+
+        wanted = _name_key(name)
+        if not wanted:
+            return found
+        scored = [(_name_score(wanted, _name_key(r[1])), r) for r in found]
+        return [r for score, r in sorted(scored, key=lambda x: -x[0])
+                if score >= _NAME_MATCH]
+
     async def hold_slot(
         self, clinic_id: UUID, slot_id: UUID, call_id: UUID, ttl_seconds: int
     ) -> datetime:
@@ -315,12 +355,18 @@ class PostgresAdapter:
                    and s.id = $2
                    and s.starts_at > now()
                    and d.active
+                   and s.held_by_call = $3
+                   and s.held_until > now()
                 """,
                 clinic_id,
                 slot_id,
+                call_id,
             )
             if slot is None:
-                raise SlotUnavailable("slot does not exist, has passed, or doctor inactive")
+                raise SlotUnavailable(
+                    "slot does not exist, has passed, doctor inactive, or is "
+                    "not held by this call"
+                )
 
             # A first-time caller has no row. coalesce keeps whatever name the
             # clinic already holds — ASR is not authoritative over the register.
@@ -354,6 +400,20 @@ class PostgresAdapter:
                 )
             except asyncpg.UniqueViolationError as exc:
                 raise SlotUnavailable("slot was booked by another caller") from exc
+
+            # The appointment is the stronger claim; the hold has done its job.
+            # A stale hold outlives a later cancellation and hides a slot that
+            # is genuinely free. Same transaction, so the two never disagree.
+            await conn.execute(
+                """
+                update opd_slots
+                   set held_until = null, held_by_call = null
+                 where clinic_id = $1 and id = $2 and held_by_call = $3
+                """,
+                clinic_id,
+                slot_id,
+                call_id,
+            )
 
         return appointment_id, slot["starts_at"], slot["doctor_name"]
 

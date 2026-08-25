@@ -407,6 +407,7 @@ info:
   specialties: "General Medicine"
   doctors: "one"
   prep_instructions: "bring id"
+  default_specialty: "general medicine"
   languages: "English"
 doctors:
   - doctor_id: d0c70001-0000-4000-8000-0000000000ff

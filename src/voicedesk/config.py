@@ -167,6 +167,30 @@ class Settings:
     sarvam_stt_model: str = "saaras:v3"
     sarvam_tts_model: str = "bulbul:v3"
     sarvam_default_language: str = "ta-IN"
+    sarvam_tts_speaker: str = "ishita"
+    """One voice for English, Tamil AND Hindi.
+
+    Sarvam publishes a per-language speaker table and `ishita` (f) and `ratan`
+    (m) are the two recommended for all three of ours. That is the "one neutral
+    voice" requirement met by vendor documentation rather than by hope -- and
+    it is the thing no Western provider can do, because their voices carry
+    their accent across languages by design, which is exactly an English voice
+    reading Tamil."""
+
+    # ElevenLabs is the DEMO voice, not the production one. Sarvam above is the
+    # chosen stack (D1) and is still unbuilt; this exists so a demo can be heard
+    # in a human voice rather than the browser's synthesiser. Optional
+    # everywhere: absent, the UI falls back to browser speech and says so.
+    elevenlabs_api_key: str | None = None
+    elevenlabs_voice_id: str = "EXAVITQu4vr4xnSDxMaL"
+    elevenlabs_model: str = "eleven_multilingual_v2"
+
+    # Deepgram: the other demo speech provider, and the better one for English.
+    # `speech_provider` picks between them; both sit behind the same two
+    # methods in the demo server, which is the whole point of having a seam.
+    deepgram_api_key: str | None = None
+    deepgram_stt_model: str = "nova-3"
+    deepgram_tts_model: str = "aura-2-thalia-en"
 
     # -- reasoning --------------------------------------------------------
     llm_provider: LlmProvider = LlmProvider.GOOGLE
@@ -208,6 +232,15 @@ class Settings:
             sarvam_stt_model=_env("SARVAM_STT_MODEL") or "saaras:v3",
             sarvam_tts_model=_env("SARVAM_TTS_MODEL") or "bulbul:v3",
             sarvam_default_language=_env("SARVAM_DEFAULT_LANGUAGE") or "ta-IN",
+            sarvam_tts_speaker=_env("SARVAM_TTS_SPEAKER") or "ishita",
+            elevenlabs_api_key=_env("ELEVENLABS_API_KEY"),
+            elevenlabs_voice_id=(
+                _env("ELEVENLABS_VOICE_ID") or "EXAVITQu4vr4xnSDxMaL"
+            ),
+            elevenlabs_model=_env("ELEVENLABS_MODEL") or "eleven_multilingual_v2",
+            deepgram_api_key=_env("DEEPGRAM_API_KEY"),
+            deepgram_stt_model=_env("DEEPGRAM_STT_MODEL") or "nova-3",
+            deepgram_tts_model=_env("DEEPGRAM_TTS_MODEL") or "aura-2-thalia-en",
             llm_provider=_llm_provider(),
             google_ai_api_key=_env("GOOGLE_AI_API_KEY"),
             openrouter_api_key=_env("OPENROUTER_API_KEY"),
@@ -278,6 +311,30 @@ class Settings:
         return self._require(
             "GOOGLE_AI_API_KEY", self.google_ai_api_key, "the reasoning step"
         )
+
+    @property
+    def speech_provider(self) -> str:
+        """Which demo speech provider is in force: deepgram, elevenlabs, browser.
+
+        Sarvam wins outright when its key is present, and it is the only one of
+        the three that is also the PRODUCTION choice (D1) rather than a demo
+        stand-in. Measured here rather than taken on trust: synthesising Tamil
+        with Bulbul and reading it back with Saaras returns the sentence word
+        for word, in Tamil script. The same round trip through an English voice
+        model returned romanised nonsense that ElevenLabs' own recogniser
+        guessed was Swedish.
+
+        Deepgram is second and English-only -- Aura-2 has no Indian language at
+        all. ElevenLabs is third: it speaks Tamil, in an English accent, by
+        design.
+        """
+        if self.sarvam_api_key:
+            return "sarvam"
+        if self.deepgram_api_key:
+            return "deepgram"
+        if self.elevenlabs_api_key:
+            return "elevenlabs"
+        return "browser"
 
     @property
     def llm_model(self) -> str:

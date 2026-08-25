@@ -287,6 +287,11 @@ async def test_the_slot_race_contests_only_the_slot_that_was_held():
             call_id=call_id,
         )
 
+    # The recovery holds the slot it moves to, exactly as the agent must:
+    # `confirm_booking` refuses a slot this call does not hold, so re-offering
+    # without a fresh hold is not a path production can take either.
+    await adapter.hold_slot(inner.tenant.clinic_id, second.slot_id, call_id, 120)
+
     appointment_id, _, _ = await adapter.confirm_booking(
         inner.tenant.clinic_id,
         slot_id=second.slot_id,

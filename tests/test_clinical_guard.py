@@ -359,3 +359,155 @@ def test_a_blocked_verdict_carries_evidence() -> None:
     verdict = screen("You should stop taking that tablet.")
     assert verdict.evidence
     assert all(":" in item for item in verdict.evidence)
+
+
+# ==========================================================================
+# Naming a department vs matching one to a complaint
+#
+# The guard had this exactly inverted, and both halves were found the same
+# way: by a caller saying "I don't know which specialty I need" and being
+# handed three refusals and a transfer.
+# ==========================================================================
+
+
+ROUTING_IS_ADMINISTRATION = [
+    "If you are not sure which department you need, we usually start with "
+    "General Medicine.",
+    "Most people who aren't sure start with General Medicine. Dr. Ragunandan "
+    "sees general medical enquiries.",
+    "I can book you with Dr. Ragunandan in General Medicine today at five.",
+    "We have Cardiology, Dermatology, ENT and General Medicine.",
+]
+
+MATCHING_A_SYMPTOM_IS_MEDICINE = [
+    "For a headache you should see a neurologist.",
+    "That sounds like a migraine, book with neurology.",
+    "For chest pain you should consult a cardiologist.",
+]
+
+
+@pytest.mark.parametrize("said", ROUTING_IS_ADMINISTRATION)
+def test_naming_the_default_department_is_not_advice(said: str) -> None:
+    """`General Medicine` collided with `medicine` in the drug lexicon.
+
+    "We usually start with General Medicine" tripped the directive frame on
+    `start` and the clinical term on `Medicine`, so the guard blocked the most
+    useful sentence the desk can say to a caller who does not know which
+    department they need -- and pushed every one of them to a transfer that did
+    not need to happen. A guard that fires on the helpful answer teaches the
+    agent to stop being helpful.
+    """
+    spoken, verdict = guard_agent_turn(said, language="en-IN", grounded_spans=())
+
+    assert not verdict.blocked, f"blocked a routing sentence: {verdict.categories}"
+    assert spoken == said
+
+
+@pytest.mark.parametrize("said", MATCHING_A_SYMPTOM_IS_MEDICINE)
+def test_routing_a_symptom_to_a_specialty_is_blocked(said: str) -> None:
+    """The prohibited act named in CLAUDE.md rule 2, and the guard missed it.
+
+    "For a headache you should see a neurologist" passed cleanly: `headache`
+    was in no lexicon and neither was `neurologist`, so the directive frame
+    found no clinical term beside it and was filtered out. This is the exact
+    sentence C13 exists to stop -- deciding a specialty from a symptom is
+    practising medicine -- and it was the one shape that got through.
+    """
+    _, verdict = guard_agent_turn(said, language="en-IN", grounded_spans=())
+
+    assert verdict.blocked, "symptom routed to a specialty was allowed through"
+
+
+def test_the_distinction_is_the_symptom_not_the_department() -> None:
+    """Same recommendation, with and without a complaint attached.
+
+    Naming a department is administration; naming one BECAUSE of what the
+    caller described is medicine. If these two ever agree, the guard has
+    stopped drawing the line that matters.
+    """
+    without = "We usually start people with General Medicine."
+    with_symptom = "For your headache you should see a neurologist."
+
+    assert not guard_agent_turn(without, language="en-IN", grounded_spans=())[1].blocked
+    assert guard_agent_turn(with_symptom, language="en-IN", grounded_spans=())[1].blocked
+
+
+# ==========================================================================
+# Sympathy is not diagnosis
+# ==========================================================================
+
+
+def test_echoing_the_callers_own_words_is_not_interpretation() -> None:
+    """"I'm sorry to hear you are having a severe headache" was blocked.
+
+    `you are having` is in the inference frame because the agent must never
+    assert a condition. It cannot tell that from the caller's own words handed
+    back with some warmth -- and the cost was not theoretical: the whole reply
+    was replaced by a canned refusal and a transfer, so someone who rang in
+    pain and said why was answered by a machine declining to discuss it.
+
+    Echoing adds no claim, no cause and no consequence. It names the thing the
+    caller already named.
+    """
+    said = (
+        "I am sorry to hear you are having a severe headache. "
+        "I can help you find an appointment today."
+    )
+
+    spoken, verdict = guard_agent_turn(said, language="en-IN", grounded_spans=())
+
+    assert not verdict.blocked, f"blocked plain sympathy: {verdict.categories}"
+    assert spoken == said
+
+
+def test_an_apology_does_not_launder_the_sentence_after_it() -> None:
+    """The exemption is directional and short.
+
+    Otherwise "I'm sorry to hear that" becomes a prefix that buys the agent a
+    free diagnosis, which is a hole big enough to drive the whole guard
+    through.
+    """
+    _, verdict = guard_agent_turn(
+        "I am sorry to hear that. You are having a serious infection and must "
+        "take antibiotics.",
+        language="en-IN",
+        grounded_spans=(),
+    )
+
+    assert verdict.blocked
+
+
+@pytest.mark.parametrize("said", [
+    "You are having a heart attack.",
+    "That could be a stroke, go to the emergency room.",
+])
+def test_naming_an_acute_condition_is_blocked(said: str) -> None:
+    """The lexicon held categories and no instances.
+
+    It knew "condition", "disease" and "illness" but not "heart attack" or
+    "stroke", so the inference frame found no clinical term to sit beside and
+    the sentence passed. The words a frightened caller actually hears are the
+    specific ones, and they are precisely the ones this agent must never say.
+    """
+    _, verdict = guard_agent_turn(said, language="en-IN", grounded_spans=())
+
+    assert verdict.blocked, "an acute condition was named without being caught"
+
+
+def test_a_blocked_turn_still_tells_the_caller_a_booking_happened() -> None:
+    """The worst pairing this system can produce.
+
+    If the agent confirms a booking and strays into clinical territory in the
+    same breath, the guard replaces the entire utterance -- so the caller hears
+    "I can't help with that, let me transfer you" while an appointment sits in
+    the register in their name. They arrive, or they do not, and nobody in the
+    conversation knew it existed.
+
+    The refusal is still correct. It is not the only thing that needs saying.
+    """
+    from voicedesk.agent import _booking_made
+
+    assert _booking_made("en-IN")
+    assert _booking_made("ta-IN") != _booking_made("en-IN")
+    # Vague on purpose: the details are the text the guard just refused.
+    assert "appointment" not in _booking_made("en-IN").lower()
