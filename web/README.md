@@ -52,7 +52,21 @@ Variables:
 `PORT` is injected by Railway and the server binds it. Health check is
 `/health`.
 
-### Frontend → Vercel
+### Frontend -> Vercel
+
+**Live:** https://voice-desk-admin-11219769s-projects.vercel.app
+
+Project `voice-desk`, root directory `web`. Two settings in `vercel.json` fail
+in opposite directions and both are needed:
+
+- `framework: "nextjs"` -- the project's own framework setting is `null` (the
+  new-project dialog auto-detects **Python**, because that is what the repo
+  root is). Without this Vercel takes the plain-static path and looks for a
+  `public/` directory.
+- **no** `outputDirectory` -- Vercel already understands `output: "export"`.
+  Setting it to `out` makes the Next builder hunt for `routes-manifest.json`
+  among the exported files.
+
 
 Root directory `web`. Set:
 
