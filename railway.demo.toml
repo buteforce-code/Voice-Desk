@@ -1,0 +1,45 @@
+# Railway config for the DEMO service — the backend the product page calls.
+#
+# A second config file rather than a second setting in `railway.toml`, because
+# Railway applies config-as-code per service and `railway.toml` belongs to the
+# real voice service. Pointing this service at its own file is what keeps the
+# two from fighting over `dockerfilePath`.
+#
+# It was worth a failed deploy to learn: `railway.toml` pins
+# `dockerfilePath = "Dockerfile"`, and a config file BEATS the dashboard and
+# the API. Setting the path through the API looked like it had worked --
+# `get-service-config` reported `Dockerfile.demo` -- while every build kept
+# using the root Dockerfile and the container looped on
+# "No module named voicedesk.server".
+#
+# Attach it with the service's `railwayConfigFile` setting.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.demo"
+
+[deploy]
+healthcheckPath = "/health"
+# Longer than the real service's 120s. This one builds a tenant, loads config
+# from disk and constructs a model client before it answers, and a cold Metal
+# builder is slower than a warm one.
+healthcheckTimeout = 180
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+# ---------------------------------------------------------------------------
+# Same two dashboard-only settings as `railway.toml`, and they matter here for
+# a different reason:
+#
+#   1. Region: Asia Southeast (Singapore). Railway has no India region, and
+#      this service defaults to `sfo` — which puts a US round-trip in front of
+#      every Sarvam and model call on a demo whose whole point is that it
+#      sounds fast. Nothing is stored here (the register is in memory and dies
+#      with the process), so this is a LATENCY decision, not a residency one.
+#      Data at rest is still Supabase Mumbai; see PROJECT.md 2.4.
+#
+#   2. Scale-to-zero is survivable here and is not on the real service. A cold
+#      start on a marketing demo is a slow first click; on a phone call it is
+#      a dead call. The page already handles a sleeping backend by playing a
+#      recorded call and saying so.
+# ---------------------------------------------------------------------------
