@@ -1,4 +1,4 @@
-# Voice Desk — the product page
+﻿# Voice Desk — the product page
 
 A static Next.js site on Vercel, talking to the Python demo backend on Railway.
 
@@ -29,6 +29,10 @@ different origins, so `127.0.0.1:3000` serves the HTML and 403s every script.
 
 ### Backend → Railway
 
+**Live:** https://demo-production-5766.up.railway.app
+
+The service is attached to **`railway.demo.toml`** via its `railwayConfigFile` setting, and that file -- not the dashboard, not the API -- is what selects `Dockerfile.demo`. A config file in the repo beats both.
+
 Point a service at the repo with **`Dockerfile.demo`** as the build source.
 (`Dockerfile` is the real pipeline service — a different, heavier image the
 G5 eval baseline is pinned against. The two must not deploy together.)
@@ -53,7 +57,7 @@ Variables:
 Root directory `web`. Set:
 
 ```
-NEXT_PUBLIC_API_BASE = https://your-backend.up.railway.app
+NEXT_PUBLIC_API_BASE = https://demo-production-5766.up.railway.app
 ```
 
 It is `NEXT_PUBLIC_`, so it is baked into the bundle and visible to anyone —
